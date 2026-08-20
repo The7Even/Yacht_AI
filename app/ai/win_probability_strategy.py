@@ -1,18 +1,15 @@
 """Monte Carlo win-probability strategy for Yacht."""
 
-from collections.abc import Iterable
-
-from app.core.categories import ALL_CATEGORIES, Category
 from app.core.game_state import GameState
 from app.core.scoring import ScoreCalculator
 
 from .action_generator import Action, ActionAlternative, ActionGenerator, ActionType, DecisionResult
 from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
-from .strategy import Strategy
+from .strategy import RuleBasedStrategy
 
 
 class WinProbabilityStrategy:
-    """Chooses the legal action with the highest estimated chance of winning."""
+    """Choose the legal action with the highest estimated chance of winning."""
 
     def __init__(
         self,
@@ -23,12 +20,13 @@ class WinProbabilityStrategy:
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
-            player_strategy=self,
+            player_strategy=RuleBasedStrategy(),
+            opponent_strategy=RuleBasedStrategy(),
         )
         self._simulation_count = simulation_count
 
     def decide(self, state: GameState) -> DecisionResult:
-        """Return the candidate action with the highest estimated win probability."""
+        """Return the legal candidate with the highest estimated win probability."""
         if state.current_dice is None or state.roll_count == 0:
             raise ValueError("WinProbabilityStrategy requires a rolled hand.")
 
@@ -37,10 +35,11 @@ class WinProbabilityStrategy:
             state, actions, self._simulation_count
         )
         candidates = tuple(
-            ActionAlternative(action, probabilities[action])
-            for action in actions
+            ActionAlternative(action, probabilities[action]) for action in actions
         )
-        ordered = sorted(candidates, key=self._sort_key, reverse=True)
+        ordered = tuple(
+            sorted(candidates, key=lambda candidate: self._sort_key(state, candidate), reverse=True)
+        )
         best = ordered[0]
         return DecisionResult(
             action=best.action,
@@ -51,7 +50,7 @@ class WinProbabilityStrategy:
 
     @staticmethod
     def _candidate_actions(state: GameState) -> tuple[Action, ...]:
-        actions: list[Action] = list(ActionGenerator.score_actions(state))
+        actions = list(ActionGenerator.score_actions(state))
         if state.roll_count < 3:
             actions.extend(
                 action
@@ -61,17 +60,23 @@ class WinProbabilityStrategy:
         return tuple(actions)
 
     @staticmethod
-    def _sort_key(candidate: ActionAlternative) -> tuple[float, float, int, tuple[int, ...], int]:
+    def _sort_key(
+        state: GameState, candidate: ActionAlternative
+    ) -> tuple[float, float, int, tuple[int, ...], str]:
         action = candidate.action
         immediate_score = 0.0
         if action.type is ActionType.SCORE:
-            immediate_score = float(action.selected_category.value if False else 0)
+            assert action.selected_category is not None
+            assert state.current_dice is not None
+            immediate_score = float(
+                ScoreCalculator.calculate(action.selected_category, state.current_dice)
+            )
         return (
             candidate.expected_value,
             immediate_score,
             1 if action.type is ActionType.SCORE else 0,
             tuple(-index for index in action.held_indices),
-            -(action.selected_category.value if action.selected_category is not None else -1),
+            action.selected_category.value if action.selected_category is not None else "",
         )
 
     @staticmethod
