@@ -24,10 +24,10 @@ class ActionStatistics:
 class MonteCarloWinProbabilityEvaluator:
     """Estimate final win probability with a bounded strategic look-ahead.
 
-    The evaluated player's expensive continuation policy is used for only the
-    next few turns. The remainder of each rollout uses the cheap fallback
-    policy, preventing candidate evaluation from recursively paying the full
-    cost of FastEV for the entire future game.
+    Expensive continuation decisions are limited both by the number of future
+    turns and by the number of strong decisions made inside each turn. This
+    keeps Monte Carlo useful without multiplying FastEV's branching cost at
+    every reroll.
     """
 
     def __init__(
@@ -37,13 +37,17 @@ class MonteCarloWinProbabilityEvaluator:
         opponent_strategy: Strategy | None = None,
         seed: int | None = None,
         strong_continuation_turns: int = 2,
+        strong_decisions_per_turn: int = 1,
     ) -> None:
         if strong_continuation_turns < 0:
             raise ValueError("strong_continuation_turns must be non-negative.")
+        if strong_decisions_per_turn < 0:
+            raise ValueError("strong_decisions_per_turn must be non-negative.")
         self._player_strategy = player_strategy or RuleBasedStrategy()
         self._opponent_strategy = opponent_strategy or RuleBasedStrategy()
         self._fallback_strategy = RuleBasedStrategy()
         self._strong_continuation_turns = strong_continuation_turns
+        self._strong_decisions_per_turn = strong_decisions_per_turn
         self._seed = seed
 
     def estimate_win_probability(
@@ -189,28 +193,48 @@ class MonteCarloWinProbabilityEvaluator:
         while not engine.is_game_over():
             active_player = engine.state.current_player
             player = players[active_player]
+            strong_decisions_remaining = 0
 
-            if active_player is perspective and strong_turns_remaining <= 0:
+            if active_player is perspective and strong_turns_remaining > 0:
+                strong_decisions_remaining = self._strong_decisions_per_turn
+            else:
                 player = AIPlayer(self._fallback_strategy)
 
-            self._finish_turn(engine, player)
+            self._finish_turn(
+                engine,
+                player,
+                strong_decisions_remaining=strong_decisions_remaining,
+            )
             if active_player is perspective and strong_turns_remaining > 0:
                 strong_turns_remaining -= 1
             if not engine.is_game_over():
                 engine.end_turn()
 
-    @staticmethod
-    def _finish_turn(engine: GameEngine, player: AIPlayer) -> None:
+    def _finish_turn(
+        self,
+        engine: GameEngine,
+        player: AIPlayer,
+        *,
+        strong_decisions_remaining: int = 0,
+    ) -> None:
+        fallback_player = AIPlayer(self._fallback_strategy)
         while not engine.state.turn_scored:
             if engine.state.current_dice is None:
                 engine.roll_dice()
-            decision = player.decide(engine.state)
+
+            active_player = player if strong_decisions_remaining > 0 else fallback_player
+            decision = active_player.decide(engine.state)
+            if strong_decisions_remaining > 0:
+                strong_decisions_remaining -= 1
+
             if decision.action.type is ActionType.SCORE:
                 if decision.selected_category is None:
                     raise RuntimeError("Strategy returned an incomplete score action.")
                 engine.score_category(decision.selected_category)
             elif decision.action.type is ActionType.REROLL:
-                MonteCarloWinProbabilityEvaluator._set_held_indices(engine, frozenset(decision.held_indices))
+                MonteCarloWinProbabilityEvaluator._set_held_indices(
+                    engine, frozenset(decision.held_indices)
+                )
                 engine.roll_dice()
             else:
                 raise RuntimeError("Simulation strategies must return SCORE or REROLL actions.")
