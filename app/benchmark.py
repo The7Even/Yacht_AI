@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import sys
+import time
 from typing import Callable
 
 from app.ai.benchmark import StrategyBenchmark
@@ -81,6 +83,34 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _format_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _progress_line(completed: int, total: int, started: float, matchup: str, game: int, games: int) -> None:
+    elapsed = time.perf_counter() - started
+    fraction = completed / total if total else 1.0
+    rate = completed / elapsed if elapsed > 0 else 0.0
+    remaining = (total - completed) / rate if rate > 0 else 0.0
+    width = 36
+    filled = int(width * fraction)
+    bar = "#" * filled + "." * (width - filled)
+    text = (
+        f"Overall [{bar}] {fraction * 100:5.1f}% | "
+        f"{completed}/{total} games | "
+        f"Elapsed {_format_duration(elapsed)} | "
+        f"ETA {_format_duration(remaining)}\n"
+        f"Current: {matchup} | game {game}/{games}"
+    )
+    sys.stdout.write("\x1b[2K\x1b[1A\x1b[2K\r" + text + "\n")
+    sys.stdout.flush()
+
+
 def main() -> None:
     args = _parse_args()
     if args.games <= 0:
@@ -107,14 +137,39 @@ def main() -> None:
 
     results = []
     pair_count = len(specs) * (len(specs) - 1) // 2
+    total_games = pair_count * args.games
     completed = 0
+    started = time.perf_counter()
+    progress_started = False
+
     for index, (name_one, factory_one) in enumerate(specs):
         for name_two, factory_two in specs[index + 1 :]:
-            completed += 1
-            print(f"[{completed}/{pair_count}] {name_one} vs {name_two} ...", flush=True)
-            result = benchmark.run(factory_one, factory_two, games=args.games, alternate_first_player=True)
+            completed_matchup = completed
+            matchup = f"{name_one} vs {name_two}"
+            print(f"[{completed_matchup // args.games + 1}/{pair_count}] {matchup} ...", flush=True)
+            if not progress_started:
+                print("", flush=True)
+                progress_started = True
+
+            def on_progress(done: int, total: int, one: str, two: str, game: int) -> None:
+                _progress_line(done, total, started, f"{one} vs {two}", game, args.games)
+
+            result = benchmark.run(
+                factory_one,
+                factory_two,
+                games=args.games,
+                alternate_first_player=True,
+                progress_callback=on_progress,
+                progress_offset=completed,
+                progress_total=total_games,
+            )
+            completed += args.games
             results.append(result)
             print(f"    {result.player_one_wins:>3} - {result.player_two_wins:<3} ({result.draws} draw), {result.player_one_win_rate:.1%} / {result.player_two_win_rate:.1%}", flush=True)
+
+    if progress_started:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
     report = BenchmarkReport.from_results(results)
     print()
