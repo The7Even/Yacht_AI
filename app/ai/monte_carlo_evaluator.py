@@ -61,7 +61,7 @@ class MonteCarloWinProbabilityEvaluator:
             simulation_count,
             perspective,
             self._scenario_seeds(simulation_count),
-            progress_label="1/1",
+            progress_label="candidate 1/1",
         )
         return statistics.win_probability
 
@@ -99,7 +99,14 @@ class MonteCarloWinProbabilityEvaluator:
         results: dict[Action, ActionStatistics] = {}
 
         if self._show_progress:
-            self._print_progress(0, total_work, started, len(candidates), simulation_count)
+            self._print_progress(
+                0,
+                total_work,
+                started,
+                len(candidates),
+                simulation_count,
+                detail=f"WP decision · candidate 0/{len(candidates)}",
+            )
 
         for candidate_index, action in enumerate(candidates, start=1):
             result = self._estimate_statistics_with_scenario_seeds(
@@ -108,7 +115,7 @@ class MonteCarloWinProbabilityEvaluator:
                 simulation_count,
                 perspective,
                 scenario_seeds,
-                progress_label=f"candidate {candidate_index}/{len(candidates)}",
+                progress_label=f"WP decision · candidate {candidate_index}/{len(candidates)}",
                 progress_base=completed,
                 progress_total=total_work,
                 progress_started=started,
@@ -116,7 +123,14 @@ class MonteCarloWinProbabilityEvaluator:
             results[action] = result
             completed += simulation_count
             if self._show_progress:
-                self._print_progress(completed, total_work, started, len(candidates), simulation_count)
+                self._print_progress(
+                    completed,
+                    total_work,
+                    started,
+                    len(candidates),
+                    simulation_count,
+                    detail=f"WP decision · candidate {candidate_index}/{len(candidates)} complete",
+                )
 
         if self._show_progress:
             sys.stdout.write("\n")
@@ -209,7 +223,7 @@ class MonteCarloWinProbabilityEvaluator:
         elapsed_text = self._format_duration(elapsed)
         percent = fraction * 100
         suffix = f" | {detail}" if detail else ""
-        text = f"\rWP [{bar}] {percent:5.1f}% | {elapsed_text} elapsed | ETA {eta} | {rate:5.1f}/s{suffix}"
+        text = f"\rWP decision [{bar}] {percent:5.1f}% | {elapsed_text} elapsed | ETA {eta} | {rate:5.1f}/s{suffix}"
         sys.stdout.write(text[:220].ljust(220))
         sys.stdout.flush()
 
