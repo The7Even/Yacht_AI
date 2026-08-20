@@ -4,8 +4,8 @@ from app.core.game_state import GameState
 from app.core.scoring import ScoreCalculator
 
 from .action_generator import Action, ActionAlternative, ActionGenerator, ActionType, DecisionResult
+from .fast_expected_value_strategy import FastExpectedValueStrategy
 from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
-from .monte_carlo_rollout_strategy import MonteCarloRolloutStrategy
 from .strategy import RuleBasedStrategy, Strategy
 
 
@@ -26,7 +26,11 @@ class WinProbabilityStrategy:
         if max_candidates is not None and max_candidates <= 0:
             raise ValueError("max_candidates must be positive when provided.")
 
-        continuation = continuation_strategy or MonteCarloRolloutStrategy()
+        # The continuation policy is deliberately strong and deterministic.
+        # WinProbabilityStrategy should estimate the value of a candidate under
+        # the same competent policy that will actually make subsequent decisions,
+        # rather than switching to a weaker rollout heuristic halfway through.
+        continuation = continuation_strategy or FastExpectedValueStrategy()
         opponent = opponent_strategy or RuleBasedStrategy()
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
             player_strategy=continuation,
@@ -73,9 +77,6 @@ class WinProbabilityStrategy:
         if max_candidates is None or len(actions) <= max_candidates:
             return tuple(actions)
 
-        # A win-probability evaluator must compare banking points with improving
-        # the hand. Keep the shortlist balanced instead of letting raw immediate
-        # score dominate candidate selection.
         if not reroll_actions:
             ranked_scores = sorted(
                 score_actions,
@@ -120,8 +121,6 @@ class WinProbabilityStrategy:
             (value * count * count for value, count in counts.items()), default=0
         )
         straight_length = float(WinProbabilityStrategy._best_straight_length(held_values))
-        # Prefer a strong duplicate first, then a useful straight structure, then
-        # total held pips. This is only a cheap filter before Monte Carlo itself.
         return (
             duplicate_strength,
             straight_length,
