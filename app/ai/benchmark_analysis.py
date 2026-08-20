@@ -22,8 +22,8 @@ class StrategyStats:
     total_opponent_score: int
     started_games: int
     started_wins: int
-    second_player_games: int
-    second_player_wins: int
+    second_games: int
+    second_wins: int
 
     @property
     def points(self) -> float:
@@ -55,20 +55,12 @@ class StrategyStats:
 
     @property
     def second_player_win_rate(self) -> float:
-        return self.second_player_wins / self.second_player_games if self.second_player_games else 0.0
-
-    @property
-    def first_player_games(self) -> int:
-        return self.started_games
-
-    @property
-    def second_player_games(self) -> int:
-        return self.second_player_games
+        return self.second_wins / self.second_games if self.second_games else 0.0
 
     @property
     def first_player_advantage(self) -> float:
         """Difference between first- and second-player win rates."""
-        if not self.started_games or not self.second_player_games:
+        if not self.started_games or not self.second_games:
             return 0.0
         return self.first_player_win_rate - self.second_player_win_rate
 
@@ -94,7 +86,6 @@ class BenchmarkReport:
 
     @classmethod
     def from_results(cls, results: Iterable[BenchmarkResult]) -> "BenchmarkReport":
-        results = tuple(results)
         aggregates: dict[str, dict[str, int]] = {}
 
         def bucket(name: str) -> dict[str, int]:
@@ -141,7 +132,7 @@ class BenchmarkReport:
             two["started_games"] += result.strategy_two_started_games
             two["started_wins"] += result.player_two_wins - result.strategy_one_second_player_wins
             two["second_games"] += result.strategy_one_started_games
-            two["second_wins"] += result.player_one_started_wins
+            two["second_wins"] += result.strategy_one_started_wins
 
         stats = tuple(
             StrategyStats(
@@ -154,8 +145,8 @@ class BenchmarkReport:
                 total_opponent_score=data["opponent_score"],
                 started_games=data["started_games"],
                 started_wins=data["started_wins"],
-                second_player_games=data["second_games"],
-                second_player_wins=data["second_wins"],
+                second_games=data["second_games"],
+                second_wins=data["second_wins"],
             )
             for name, data in aggregates.items()
         )
