@@ -50,6 +50,7 @@ class MonteCarloWinProbabilityEvaluator:
         self._show_progress = show_progress
         self._profile = os.getenv("WP_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
         self._deep_profile = os.getenv("WP_DEEP_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._decision_profile = os.getenv("WP_DECISION_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
 
     def estimate_win_probability(
         self,
@@ -182,6 +183,8 @@ class MonteCarloWinProbabilityEvaluator:
         simulation_times: list[float] = []
         rollout_step_counts: list[int] = []
         rollout_times: list[float] = []
+        decision_counts: list[int] = []
+        decision_times: list[float] = []
 
         for simulation_index, seed in enumerate(scenario_seeds, start=1):
             simulation_started = time.perf_counter() if self._deep_profile else 0.0
@@ -189,7 +192,9 @@ class MonteCarloWinProbabilityEvaluator:
             engine.state = deepcopy(game_state)
             self._apply_candidate_action(engine, action)
             rollout_started = time.perf_counter() if self._deep_profile else 0.0
-            rollout_steps = self._finish_game(engine, players, player_id)
+            rollout_steps, sim_decisions, sim_decision_time = self._finish_game(
+                engine, players, player_id, profile_decisions=self._deep_profile or self._decision_profile
+            )
             rollout_elapsed = (time.perf_counter() - rollout_started) if self._deep_profile else 0.0
             wins += self._final_result(engine.state, player_id)
             total_score += engine.state.players[player_id].total_score
@@ -200,6 +205,8 @@ class MonteCarloWinProbabilityEvaluator:
                 simulation_times.append(simulation_elapsed)
                 rollout_step_counts.append(rollout_steps)
                 rollout_times.append(rollout_elapsed)
+                decision_counts.append(sim_decisions)
+                decision_times.append(sim_decision_time)
 
             if (
                 self._show_progress
@@ -223,12 +230,18 @@ class MonteCarloWinProbabilityEvaluator:
             avg_rollout = sum(rollout_times) / len(rollout_times)
             max_rollout = max(rollout_times)
             early_exits = sum(1 for steps in rollout_step_counts if steps <= 2)
+            avg_decisions = sum(decision_counts) / len(decision_counts)
+            max_decisions = max(decision_counts)
+            avg_decision_time = sum(decision_times) / len(decision_times)
+            max_decision_time = max(decision_times)
             candidate_label = profile_candidate_index if profile_candidate_index is not None else "?"
             print(
                 f"WP DEEP PROFILE | candidate {candidate_label} | "
                 f"avg sim {avg_sim:.3f}s | max sim {max_sim:.3f}s | "
                 f"avg rollout {avg_rollout:.3f}s | max rollout {max_rollout:.3f}s | "
                 f"avg rollout steps {avg_steps:.1f} | max {max_steps} | "
+                f"avg decisions {avg_decisions:.1f} | max {max_decisions} | "
+                f"avg decision time {avg_decision_time:.3f}s | max {max_decision_time:.3f}s | "
                 f"early exits {early_exits}/{len(rollout_step_counts)}"
             )
 
@@ -310,9 +323,18 @@ class MonteCarloWinProbabilityEvaluator:
         for index in desired - engine.state.held_indices:
             engine.hold_dice(index)
 
-    def _finish_game(self, engine: GameEngine, players: dict[PlayerId, AIPlayer], perspective: PlayerId) -> int:
+    def _finish_game(
+        self,
+        engine: GameEngine,
+        players: dict[PlayerId, AIPlayer],
+        perspective: PlayerId,
+        *,
+        profile_decisions: bool = False,
+    ) -> tuple[int, int, float]:
         strong_turns_remaining = self._strong_continuation_turns
         turn_count = 0
+        decision_count = 0
+        decision_elapsed = 0.0
         while not engine.is_game_over():
             active_player = engine.state.current_player
             player = players[active_player]
@@ -321,21 +343,41 @@ class MonteCarloWinProbabilityEvaluator:
                 strong_decisions_remaining = self._strong_decisions_per_turn
             else:
                 player = AIPlayer(self._fallback_strategy)
-            self._finish_turn(engine, player, strong_decisions_remaining=strong_decisions_remaining)
+            turn_decisions, turn_elapsed = self._finish_turn(
+                engine,
+                player,
+                strong_decisions_remaining=strong_decisions_remaining,
+                profile_decisions=profile_decisions,
+            )
+            decision_count += turn_decisions
+            decision_elapsed += turn_elapsed
             turn_count += 1
             if active_player is perspective and strong_turns_remaining > 0:
                 strong_turns_remaining -= 1
             if not engine.is_game_over():
                 engine.end_turn()
-        return turn_count
+        return turn_count, decision_count, decision_elapsed
 
-    def _finish_turn(self, engine: GameEngine, player: AIPlayer, *, strong_decisions_remaining: int = 0) -> None:
+    def _finish_turn(
+        self,
+        engine: GameEngine,
+        player: AIPlayer,
+        *,
+        strong_decisions_remaining: int = 0,
+        profile_decisions: bool = False,
+    ) -> tuple[int, float]:
         fallback_player = AIPlayer(self._fallback_strategy)
+        decision_count = 0
+        decision_elapsed = 0.0
         while not engine.state.turn_scored:
             if engine.state.current_dice is None:
                 engine.roll_dice()
             active_player = player if strong_decisions_remaining > 0 else fallback_player
+            decision_started = time.perf_counter() if profile_decisions else 0.0
             decision = active_player.decide(engine.state)
+            if profile_decisions:
+                decision_elapsed += time.perf_counter() - decision_started
+            decision_count += 1
             if strong_decisions_remaining > 0:
                 strong_decisions_remaining -= 1
             if decision.action.type is ActionType.SCORE:
@@ -347,6 +389,7 @@ class MonteCarloWinProbabilityEvaluator:
                 engine.roll_dice()
             else:
                 raise RuntimeError("Simulation strategies must return SCORE or REROLL actions.")
+        return decision_count, decision_elapsed
 
     @staticmethod
     def _final_result(state: GameState, perspective: PlayerId) -> float:
