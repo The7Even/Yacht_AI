@@ -10,6 +10,7 @@ from app.core.game_state import GameState, PlayerId
 
 from .action_generator import Action, ActionType
 from .ai_player import AIPlayer
+from .monte_carlo_rollout_strategy import MonteCarloRolloutStrategy
 from .strategy import RuleBasedStrategy, Strategy
 
 
@@ -34,11 +35,7 @@ class MonteCarloWinProbabilityEvaluator:
         simulation_count: int = 10_000,
         perspective: PlayerId | None = None,
     ) -> float:
-        """Estimate the chance that *perspective* wins after applying *action*.
-
-        Ties count as 0.5 win credit. A completed input game is evaluated
-        directly and requires no random simulations.
-        """
+        """Estimate the chance that *perspective* wins after applying *action*."""
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
         player_id = perspective or game_state.current_player
@@ -48,12 +45,13 @@ class MonteCarloWinProbabilityEvaluator:
             raise ValueError("Monte Carlo evaluation requires a started game.")
 
         rng = random.Random(self._seed)
+        players = self._make_players(player_id)
         total = 0.0
         for _ in range(simulation_count):
             engine = GameEngine(DiceRoller(rng))
             engine.state = deepcopy(game_state)
             self._apply_candidate_action(engine, action)
-            self._finish_game(engine, player_id)
+            self._finish_game(engine, players)
             total += self._final_result(engine.state, player_id)
         return total / simulation_count
 
@@ -64,16 +62,13 @@ class MonteCarloWinProbabilityEvaluator:
         simulation_count: int = 10_000,
         perspective: PlayerId | None = None,
     ) -> dict[Action, float]:
-        """Evaluate several candidate actions using one deterministic RNG stream."""
+        """Evaluate several candidate actions with deterministic independent RNG streams."""
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
         candidates = tuple(actions)
         if not candidates:
             return {}
 
-        # Reuse the same base state object and RNG stream across candidates.
-        # This removes repeated Random construction and keeps the comparison
-        # reproducible while preserving independent game-state copies per run.
         return {
             action: self._estimate_with_rng(
                 game_state,
@@ -99,14 +94,26 @@ class MonteCarloWinProbabilityEvaluator:
         if not game_state.game_started:
             raise ValueError("Monte Carlo evaluation requires a started game.")
 
+        players = self._make_players(player_id)
         total = 0.0
         for _ in range(simulation_count):
             engine = GameEngine(DiceRoller(rng))
             engine.state = deepcopy(game_state)
             self._apply_candidate_action(engine, action)
-            self._finish_game(engine, player_id)
+            self._finish_game(engine, players)
             total += self._final_result(engine.state, player_id)
         return total / simulation_count
+
+    def _make_players(self, perspective: PlayerId) -> dict[PlayerId, AIPlayer]:
+        """Create rollout players once per candidate instead of once per simulation."""
+        return {
+            PlayerId.PLAYER: AIPlayer(
+                self._player_strategy if PlayerId.PLAYER is perspective else self._opponent_strategy
+            ),
+            PlayerId.AI: AIPlayer(
+                self._player_strategy if PlayerId.AI is perspective else self._opponent_strategy
+            ),
+        }
 
     def _apply_candidate_action(self, engine: GameEngine, action: Action) -> None:
         if action.type is ActionType.SCORE:
@@ -127,16 +134,8 @@ class MonteCarloWinProbabilityEvaluator:
         for index in desired - engine.state.held_indices:
             engine.hold_dice(index)
 
-    def _finish_game(self, engine: GameEngine, perspective: PlayerId) -> None:
+    def _finish_game(self, engine: GameEngine, players: dict[PlayerId, AIPlayer]) -> None:
         """Continue from the candidate action until both scorecards are complete."""
-        players = {
-            PlayerId.PLAYER: AIPlayer(
-                self._player_strategy if PlayerId.PLAYER is perspective else self._opponent_strategy
-            ),
-            PlayerId.AI: AIPlayer(
-                self._player_strategy if PlayerId.AI is perspective else self._opponent_strategy
-            ),
-        }
         while not engine.is_game_over():
             active_player = engine.state.current_player
             self._finish_turn(engine, players[active_player])
