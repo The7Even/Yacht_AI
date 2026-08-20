@@ -1,0 +1,1 @@
+"""Yacht AI application package."""

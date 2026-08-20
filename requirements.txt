@@ -1,0 +1,2 @@
+# Runtime GUI dependencies will be added when the UI phase begins.
+pytest>=8.0
