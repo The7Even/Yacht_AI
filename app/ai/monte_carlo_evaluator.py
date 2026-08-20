@@ -25,9 +25,9 @@ class MonteCarloWinProbabilityEvaluator:
     """Estimate final win probability with a bounded strategic look-ahead.
 
     The evaluated player's expensive continuation policy is used for only the
-    immediately following turn. The remainder of each rollout uses the cheap
-    fallback policy, preventing candidate evaluation from recursively paying
-    the full cost of FastEV for several future turns.
+    next few turns. The remainder of each rollout uses the cheap fallback
+    policy, preventing candidate evaluation from recursively paying the full
+    cost of FastEV for the entire future game.
     """
 
     def __init__(
@@ -36,7 +36,7 @@ class MonteCarloWinProbabilityEvaluator:
         player_strategy: Strategy | None = None,
         opponent_strategy: Strategy | None = None,
         seed: int | None = None,
-        strong_continuation_turns: int = 1,
+        strong_continuation_turns: int = 2,
     ) -> None:
         if strong_continuation_turns < 0:
             raise ValueError("strong_continuation_turns must be non-negative.")
@@ -99,8 +99,6 @@ class MonteCarloWinProbabilityEvaluator:
         if not candidates:
             return {}
 
-        # Common-random-number comparison: every candidate sees the same
-        # sequence of future scenarios, making action differences less noisy.
         scenario_seeds = self._scenario_seeds(simulation_count)
         return {
             action: self._estimate_statistics_with_scenario_seeds(
@@ -192,8 +190,6 @@ class MonteCarloWinProbabilityEvaluator:
             active_player = engine.state.current_player
             player = players[active_player]
 
-            # Only the evaluated player's expensive continuation is bounded.
-            # Once the horizon is exhausted, use the cheap fallback policy.
             if active_player is perspective and strong_turns_remaining <= 0:
                 player = AIPlayer(self._fallback_strategy)
 
