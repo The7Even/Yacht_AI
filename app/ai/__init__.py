@@ -3,6 +3,7 @@
 from .action_generator import Action, ActionAlternative, ActionGenerator, ActionType, DecisionResult
 from .ai_player import AIPlayer
 from .benchmark import BenchmarkResult, MatchResult, StrategyBenchmark
+from .benchmark_analysis import BenchmarkReport, StrategyStats
 from .bonus_evaluator import BonusEvaluation, BonusEvaluator
 from .expected_value_strategy import ExpectedValueStrategy
 from .game_aware_strategy import GameAwareStrategicExpectedValueStrategy
@@ -18,6 +19,7 @@ __all__ = [
     "ActionAlternative",
     "ActionType",
     "AIPlayer",
+    "BenchmarkReport",
     "BenchmarkResult",
     "DecisionResult",
     "ExpectedValueStrategy",
@@ -29,6 +31,7 @@ __all__ = [
     "RuleBasedStrategy",
     "StrategicExpectedValueStrategy",
     "StrategyBenchmark",
+    "StrategyStats",
     "UpperCategoryExpectedValueEvaluator",
     "WinProbabilityStrategy",
 ]
