@@ -2,6 +2,7 @@ from copy import deepcopy
 
 from app.ai.action_generator import Action, ActionType
 from app.ai.fast_expected_value_strategy import FastExpectedValueStrategy
+from app.ai.monte_carlo_rollout_strategy import MonteCarloRolloutStrategy
 from app.ai.win_probability_strategy import WinProbabilityStrategy
 from app.core.categories import ALL_CATEGORIES, Category
 from app.core.game_state import GameState, PlayerId
@@ -89,10 +90,10 @@ def test_strategy_does_not_mutate_game_state() -> None:
     assert state == original
 
 
-def test_default_continuation_policy_is_fast_ev() -> None:
+def test_default_continuation_policy_is_monte_carlo_rollout() -> None:
     strategy = WinProbabilityStrategy(simulation_count=1)
 
-    assert isinstance(strategy._evaluator._player_strategy, FastExpectedValueStrategy)
+    assert isinstance(strategy._evaluator._player_strategy, MonteCarloRolloutStrategy)
 
 
 def test_continuation_and_opponent_policies_are_injectable() -> None:
