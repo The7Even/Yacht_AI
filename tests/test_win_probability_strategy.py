@@ -34,7 +34,13 @@ def test_selects_highest_probability_action() -> None:
     state = state_with_roll()
     reroll = Action(ActionType.REROLL, held_indices=(0, 1, 2))
     score = Action(ActionType.SCORE, selected_category=Category.CHOICE)
-    evaluator = FakeEvaluator({reroll: 0.30, score: 0.80})
+
+    probabilities = {
+        action: 0.10 for action in WinProbabilityStrategy._candidate_actions(state)
+    }
+    probabilities[reroll] = 0.30
+    probabilities[score] = 0.80
+    evaluator = FakeEvaluator(probabilities)
 
     result = WinProbabilityStrategy(evaluator=evaluator, simulation_count=123).decide(state)
 

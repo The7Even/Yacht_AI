@@ -38,7 +38,6 @@ class MatchResult:
     def draw(self) -> bool:
         return self.winner == 0
 
-    # Backward-compatible seat-oriented aliases for simple callers.
     @property
     def player_score(self) -> int:
         return self.strategy_one_score if self.strategy_one_started else self.strategy_two_score
@@ -64,6 +63,8 @@ class BenchmarkResult:
     strategy_two_started_games: int
     strategy_one_started_wins: int
     strategy_one_second_player_wins: int
+    strategy_two_started_wins: int
+    strategy_two_second_player_wins: int
 
     @property
     def player_one_win_rate(self) -> float:
@@ -146,7 +147,9 @@ class StrategyBenchmark:
 
         one_wins = two_wins = draws = 0
         one_score = two_score = 0
-        one_starts = one_second_wins = one_started_wins = 0
+        one_starts = 0
+        one_started_wins = one_second_wins = 0
+        two_started_wins = two_second_wins = 0
 
         name_one = self._factory_name(strategy_one)
         name_two = self._factory_name(strategy_two)
@@ -171,6 +174,10 @@ class StrategyBenchmark:
                     one_second_wins += 1
             elif result.winner < 0:
                 two_wins += 1
+                if result.strategy_one_started:
+                    two_second_wins += 1
+                else:
+                    two_started_wins += 1
             else:
                 draws += 1
 
@@ -190,6 +197,8 @@ class StrategyBenchmark:
             strategy_two_started_games=games - one_starts,
             strategy_one_started_wins=one_started_wins,
             strategy_one_second_player_wins=one_second_wins,
+            strategy_two_started_wins=two_started_wins,
+            strategy_two_second_player_wins=two_second_wins,
         )
 
     def round_robin(
