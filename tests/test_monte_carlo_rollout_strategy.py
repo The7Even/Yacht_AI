@@ -23,8 +23,6 @@ def test_rollout_scores_completed_large_straight() -> None:
 
 def test_rollout_considers_upper_bonus() -> None:
     state = state_with_dice((6, 6, 6, 2, 3))
-    # PlayerState.upper_total is derived from recorded upper categories, so
-    # create 48 points through legal category records rather than mutating it.
     player = state.players[state.current_player]
     player.category_scores = {
         Category.ONES: 1,
@@ -32,10 +30,7 @@ def test_rollout_considers_upper_bonus() -> None:
         Category.THREES: 3,
         Category.FOURS: 8,
         Category.FIVES: 10,
-        Category.SIXES: 24,
     }
-    # The current hand must still be able to use a remaining upper category.
-    player.category_scores.pop(Category.SIXES)
     result = MonteCarloRolloutStrategy().decide(state)
     assert result.action.selected_category is Category.SIXES
 
