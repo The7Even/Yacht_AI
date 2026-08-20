@@ -3,6 +3,7 @@
 from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
+import os
 import random
 import sys
 import time
@@ -47,6 +48,8 @@ class MonteCarloWinProbabilityEvaluator:
         self._strong_decisions_per_turn = strong_decisions_per_turn
         self._seed = seed
         self._show_progress = show_progress
+        # Opt-in profiling keeps normal benchmark behaviour and timing unchanged.
+        self._profile = os.getenv("WP_PROFILE", "").strip().lower() in {"1", "true", "yes", "on"}
 
     def estimate_win_probability(
         self,
@@ -102,6 +105,7 @@ class MonteCarloWinProbabilityEvaluator:
             self._print_progress(0, total_work, started, detail=f"WP decision · candidate 0/{len(candidates)}")
 
         for candidate_index, action in enumerate(candidates, start=1):
+            candidate_started = time.perf_counter()
             result = self._estimate_statistics_with_scenario_seeds(
                 game_state,
                 action,
@@ -113,8 +117,15 @@ class MonteCarloWinProbabilityEvaluator:
                 progress_total=total_work,
                 progress_started=started,
             )
+            candidate_elapsed = time.perf_counter() - candidate_started
             results[action] = result
             completed += simulation_count
+            if self._profile:
+                print(
+                    f"WP PROFILE | candidate {candidate_index}/{len(candidates)} | "
+                    f"{candidate_elapsed:.3f}s | {candidate_elapsed / simulation_count:.3f}s/sim | "
+                    f"{action}"
+                )
             if self._show_progress:
                 self._print_progress(
                     completed,
@@ -123,6 +134,12 @@ class MonteCarloWinProbabilityEvaluator:
                     detail=f"WP decision · candidate {candidate_index}/{len(candidates)} complete",
                 )
 
+        if self._profile:
+            elapsed = time.perf_counter() - started
+            print(
+                f"WP PROFILE | decision total {elapsed:.3f}s | "
+                f"{len(candidates)} candidates × {simulation_count} simulations"
+            )
         if self._show_progress:
             self._finish_progress_line()
         return results
@@ -216,8 +233,6 @@ class MonteCarloWinProbabilityEvaluator:
 
     @staticmethod
     def _write_progress_line(text: str) -> None:
-        # ANSI clear-line + carriage return prevents progress updates from
-        # accumulating when the terminal honors ANSI control sequences.
         sys.stdout.write("\x1b[2K\r" + text[:220])
         sys.stdout.flush()
 
@@ -292,9 +307,9 @@ class MonteCarloWinProbabilityEvaluator:
             if decision.action.type is ActionType.SCORE:
                 if decision.selected_category is None:
                     raise RuntimeError("Strategy returned an incomplete score action.")
-                engine.score_category(decision.selected_category)
+                engine.score_category(decision.action.selected_category)
             elif decision.action.type is ActionType.REROLL:
-                MonteCarloWinProbabilityEvaluator._set_held_indices(engine, frozenset(decision.held_indices))
+                MonteCarloWinProbabilityEvaluator._set_held_indices(engine, frozenset(decision.action.held_indices))
                 engine.roll_dice()
             else:
                 raise RuntimeError("Simulation strategies must return SCORE or REROLL actions.")
