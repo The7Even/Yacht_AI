@@ -16,21 +16,25 @@ class WinProbabilityStrategy:
         *,
         evaluator: MonteCarloWinProbabilityEvaluator | None = None,
         simulation_count: int = 300,
+        max_candidates: int | None = None,
     ) -> None:
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
+        if max_candidates is not None and max_candidates <= 0:
+            raise ValueError("max_candidates must be positive when provided.")
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
             player_strategy=RuleBasedStrategy(),
             opponent_strategy=RuleBasedStrategy(),
         )
         self._simulation_count = simulation_count
+        self._max_candidates = max_candidates
 
     def decide(self, state: GameState) -> DecisionResult:
         """Return the legal candidate with the highest estimated win probability."""
         if state.current_dice is None or state.roll_count == 0:
             raise ValueError("WinProbabilityStrategy requires a rolled hand.")
 
-        actions = self._candidate_actions(state)
+        actions = self._candidate_actions(state, self._max_candidates)
         probabilities = self._evaluator.estimate_actions_win_probability(
             state, actions, self._simulation_count
         )
@@ -49,7 +53,9 @@ class WinProbabilityStrategy:
         )
 
     @staticmethod
-    def _candidate_actions(state: GameState) -> tuple[Action, ...]:
+    def _candidate_actions(
+        state: GameState, max_candidates: int | None = None
+    ) -> tuple[Action, ...]:
         actions = list(ActionGenerator.score_actions(state))
         if state.roll_count < 3:
             actions.extend(
@@ -57,7 +63,38 @@ class WinProbabilityStrategy:
                 for action in ActionGenerator.reroll_actions(state.held_indices)
                 if len(action.held_indices) < 5
             )
-        return tuple(actions)
+        if max_candidates is None or len(actions) <= max_candidates:
+            return tuple(actions)
+
+        ranked = sorted(
+            actions,
+            key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
+            reverse=True,
+        )
+        return tuple(ranked[:max_candidates])
+
+    @staticmethod
+    def _candidate_priority(
+        state: GameState, action: Action
+    ) -> tuple[float, float, int, tuple[int, ...]]:
+        """Cheap pre-ranking used only when fast candidate limiting is enabled."""
+        assert state.current_dice is not None
+        if action.type is ActionType.SCORE:
+            assert action.selected_category is not None
+            score = float(ScoreCalculator.calculate(action.selected_category, state.current_dice))
+            return (score, score, 1, tuple(-index for index in action.held_indices))
+
+        held_values = [state.current_dice[index] for index in action.held_indices]
+        counts: dict[int, int] = {}
+        for value in held_values:
+            counts[value] = counts.get(value, 0) + 1
+        duplicate_value = max((value * count for value, count in counts.items()), default=0)
+        return (
+            float(sum(held_values)),
+            float(duplicate_value),
+            0,
+            tuple(-index for index in action.held_indices),
+        )
 
     @staticmethod
     def _sort_key(
