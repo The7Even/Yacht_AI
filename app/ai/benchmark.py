@@ -15,6 +15,7 @@ from .strategy import Strategy
 
 
 StrategyFactory = Callable[[], Strategy]
+ProgressCallback = Callable[[int, int, str, str, int], None]
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,9 @@ class StrategyBenchmark:
         games: int = 100,
         *,
         alternate_first_player: bool = True,
+        progress_callback: ProgressCallback | None = None,
+        progress_offset: int = 0,
+        progress_total: int | None = None,
     ) -> BenchmarkResult:
         """Run a matchup, balancing first-player advantage by default."""
         if games <= 0:
@@ -153,6 +157,7 @@ class StrategyBenchmark:
 
         name_one = self._factory_name(strategy_one)
         name_two = self._factory_name(strategy_two)
+        total = progress_total if progress_total is not None else progress_offset + games
 
         for index in range(games):
             strategy_one_starts = not alternate_first_player or index % 2 == 0
@@ -183,6 +188,15 @@ class StrategyBenchmark:
 
             if result.strategy_one_started:
                 one_starts += 1
+
+            if progress_callback is not None:
+                progress_callback(
+                    progress_offset + index + 1,
+                    total,
+                    name_one,
+                    name_two,
+                    index + 1,
+                )
 
         return BenchmarkResult(
             strategy_one=name_one,
