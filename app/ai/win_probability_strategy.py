@@ -26,9 +26,6 @@ class WinProbabilityStrategy:
         if max_candidates is not None and max_candidates <= 0:
             raise ValueError("max_candidates must be positive when provided.")
 
-        # Monte Carlo needs a rollout policy that is much cheaper than FastEV.
-        # FastEV may enumerate thousands of reroll outcomes per decision, which
-        # becomes prohibitive when repeated across many simulated games.
         continuation = continuation_strategy or MonteCarloRolloutStrategy()
         opponent = opponent_strategy or RuleBasedStrategy()
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
@@ -63,45 +60,89 @@ class WinProbabilityStrategy:
     def _candidate_actions(
         state: GameState, max_candidates: int | None = None
     ) -> tuple[Action, ...]:
-        actions = list(ActionGenerator.score_actions(state))
+        score_actions = list(ActionGenerator.score_actions(state))
+        reroll_actions: list[Action] = []
         if state.roll_count < 3:
-            actions.extend(
+            reroll_actions = [
                 action
                 for action in ActionGenerator.reroll_actions(state.held_indices)
                 if len(action.held_indices) < 5
-            )
+            ]
+
+        actions = score_actions + reroll_actions
         if max_candidates is None or len(actions) <= max_candidates:
             return tuple(actions)
 
-        ranked = sorted(
-            actions,
+        # A win-probability evaluator must compare banking points with improving
+        # the hand. Keep the shortlist balanced instead of letting raw immediate
+        # score dominate candidate selection.
+        if not reroll_actions:
+            ranked_scores = sorted(
+                score_actions,
+                key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
+                reverse=True,
+            )
+            return tuple(ranked_scores[:max_candidates])
+
+        score_slots = max(1, max_candidates // 2)
+        reroll_slots = max_candidates - score_slots
+        if score_slots + reroll_slots > max_candidates:
+            reroll_slots = max_candidates - score_slots
+
+        ranked_scores = sorted(
+            score_actions,
             key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
             reverse=True,
-        )
-        return tuple(ranked[:max_candidates])
+        )[:score_slots]
+        ranked_rerolls = sorted(
+            reroll_actions,
+            key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
+            reverse=True,
+        )[:reroll_slots]
+        return tuple(ranked_scores + ranked_rerolls)
 
     @staticmethod
     def _candidate_priority(
         state: GameState, action: Action
-    ) -> tuple[float, float, int, tuple[int, ...]]:
-        """Cheap pre-ranking used only when fast candidate limiting is enabled."""
+    ) -> tuple[float, float, float, int, tuple[int, ...]]:
+        """Cheap pre-ranking used only when candidate limiting is enabled."""
         assert state.current_dice is not None
         if action.type is ActionType.SCORE:
             assert action.selected_category is not None
             score = float(ScoreCalculator.calculate(action.selected_category, state.current_dice))
-            return (score, score, 1, tuple(-index for index in action.held_indices))
+            return (score, score, 0.0, 1, tuple(-index for index in action.held_indices))
 
         held_values = [state.current_dice[index] for index in action.held_indices]
         counts: dict[int, int] = {}
         for value in held_values:
             counts[value] = counts.get(value, 0) + 1
-        duplicate_value = max((value * count for value, count in counts.items()), default=0)
+        duplicate_strength = max(
+            (value * count * count for value, count in counts.items()), default=0
+        )
+        straight_length = float(WinProbabilityStrategy._best_straight_length(held_values))
+        # Prefer a strong duplicate first, then a useful straight structure, then
+        # total held pips. This is only a cheap filter before Monte Carlo itself.
         return (
+            duplicate_strength,
+            straight_length,
             float(sum(held_values)),
-            float(duplicate_value),
             0,
             tuple(-index for index in action.held_indices),
         )
+
+    @staticmethod
+    def _best_straight_length(values: list[int]) -> int:
+        if not values:
+            return 0
+        faces = sorted(set(values))
+        best = current = 1
+        for left, right in zip(faces, faces[1:]):
+            if right == left + 1:
+                current += 1
+                best = max(best, current)
+            else:
+                current = 1
+        return best
 
     @staticmethod
     def _sort_key(
