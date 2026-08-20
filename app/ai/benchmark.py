@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Type
+from typing import Callable
 
 from app.ai.ai_player import AIPlayer
 from app.ai.strategy import Strategy
 from app.core.dice import DiceRoller
 from app.core.game_engine import GameEngine
-from app.core.game_state import GameState, PlayerId, PlayerState
+from app.core.game_state import GameState, PlayerId
 
 
 @dataclass(frozen=True)
 class MatchResult:
     """Outcome of one completed AI-vs-AI game."""
 
-    player_one_score: int
-    player_two_score: int
+    player_score: int
+    ai_score: int
     winner: PlayerId | None
 
     @property
@@ -63,63 +63,47 @@ StrategyFactory = Callable[[], Strategy]
 
 
 class StrategyBenchmark:
-    """Runs deterministic, reproducible AI-vs-AI games."""
+    """Run reproducible AI-vs-AI matches."""
 
     def __init__(self, seed: int = 0) -> None:
         self.seed = seed
 
-    def play_match(
-        self,
-        strategy_one: StrategyFactory,
-        strategy_two: StrategyFactory,
-        seed: int,
-    ) -> MatchResult:
-        state = GameState(
-            players={
-                PlayerId.PLAYER_ONE: PlayerState(),
-                PlayerId.PLAYER_TWO: PlayerState(),
-            },
-            current_player=PlayerId.PLAYER_ONE,
-        )
-        engine = GameEngine(state=state, dice_roller=DiceRoller(seed=seed))
+    def play_match(self, strategy_one: StrategyFactory, strategy_two: StrategyFactory, seed: int) -> MatchResult:
+        engine = GameEngine(dice_roller=DiceRoller(seed=seed))
+        state = engine.start_game()
         strategies = {
-            PlayerId.PLAYER_ONE: strategy_one(),
-            PlayerId.PLAYER_TWO: strategy_two(),
+            PlayerId.PLAYER: strategy_one(),
+            PlayerId.AI: strategy_two(),
         }
 
         while not state.game_over:
             player = state.current_player
             ai = AIPlayer(strategy=strategies[player])
-            engine.roll()
-            self._play_turn(engine, ai)
+            engine.roll_dice()
 
-        one = state.players[PlayerId.PLAYER_ONE].total_score
-        two = state.players[PlayerId.PLAYER_TWO].total_score
+            while not state.turn_scored:
+                decision = ai.decide(state)
+                action = decision.action
+                if action.type.value == "score":
+                    engine.score_category(action.selected_category)
+                    break
+                engine.roll_dice()
+
+            if not state.game_over:
+                engine.end_turn()
+
+        player_score = state.player_score
+        ai_score = state.ai_score
         winner = (
-            PlayerId.PLAYER_ONE
-            if one > two
-            else PlayerId.PLAYER_TWO
-            if two > one
+            PlayerId.PLAYER
+            if player_score > ai_score
+            else PlayerId.AI
+            if ai_score > player_score
             else None
         )
-        return MatchResult(one, two, winner)
+        return MatchResult(player_score, ai_score, winner)
 
-    @staticmethod
-    def _play_turn(engine: GameEngine, ai: AIPlayer) -> None:
-        while not engine.state.turn_score_committed:
-            decision = ai.decide(engine.state)
-            action = decision.action
-            if action.type.value == "score":
-                engine.score_category(action.selected_category)
-                return
-            engine.reroll(action.held_indices)
-
-    def run(
-        self,
-        strategy_one: StrategyFactory,
-        strategy_two: StrategyFactory,
-        games: int = 100,
-    ) -> BenchmarkResult:
+    def run(self, strategy_one: StrategyFactory, strategy_two: StrategyFactory, games: int = 100) -> BenchmarkResult:
         if games <= 0:
             raise ValueError("games must be positive")
 
@@ -127,11 +111,11 @@ class StrategyBenchmark:
         one_score = two_score = 0
         for index in range(games):
             result = self.play_match(strategy_one, strategy_two, self.seed + index)
-            one_score += result.player_one_score
-            two_score += result.player_two_score
-            if result.winner is PlayerId.PLAYER_ONE:
+            one_score += result.player_score
+            two_score += result.ai_score
+            if result.winner is PlayerId.PLAYER:
                 one_wins += 1
-            elif result.winner is PlayerId.PLAYER_TWO:
+            elif result.winner is PlayerId.AI:
                 two_wins += 1
             else:
                 draws += 1
