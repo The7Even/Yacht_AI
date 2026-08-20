@@ -15,7 +15,7 @@ from .strategy import Strategy
 
 
 StrategyFactory = Callable[[], Strategy]
-ProgressCallback = Callable[[int, int, str, str, int], None]
+ProgressCallback = Callable[[int, int, str, str, int, int, int], None]
 
 
 @dataclass(frozen=True)
@@ -109,6 +109,11 @@ class StrategyBenchmark:
         *,
         seed: int | None = None,
         strategy_one_starts: bool = True,
+        progress_callback: ProgressCallback | None = None,
+        progress_offset: int = 0,
+        progress_total: int | None = None,
+        game_number: int = 1,
+        games_per_matchup: int = 1,
     ) -> MatchResult:
         """Play one complete game and report it from strategy one's perspective."""
         rng = random.Random(seed)
@@ -120,9 +125,21 @@ class StrategyBenchmark:
             PlayerId.AI: strategy_two() if strategy_one_starts else strategy_one(),
         }
 
+        turn = 0
         while not engine.is_game_over():
+            turn += 1
             active_strategy = strategies[engine.state.current_player]
             self._play_turn(engine, active_strategy)
+            if progress_callback is not None:
+                progress_callback(
+                    progress_offset,
+                    progress_total if progress_total is not None else progress_offset + games_per_matchup,
+                    self._factory_name(strategy_one),
+                    self._factory_name(strategy_two),
+                    game_number,
+                    games_per_matchup,
+                    turn,
+                )
             if not engine.is_game_over():
                 engine.end_turn()
 
@@ -167,6 +184,11 @@ class StrategyBenchmark:
                 strategy_two,
                 seed=game_seed,
                 strategy_one_starts=strategy_one_starts,
+                progress_callback=progress_callback,
+                progress_offset=progress_offset + index,
+                progress_total=total,
+                game_number=index + 1,
+                games_per_matchup=games,
             )
 
             one_score += result.strategy_one_score
@@ -196,6 +218,8 @@ class StrategyBenchmark:
                     name_one,
                     name_two,
                     index + 1,
+                    games,
+                    0,
                 )
 
         return BenchmarkResult(
