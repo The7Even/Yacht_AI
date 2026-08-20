@@ -10,14 +10,7 @@ from .strategy import RuleBasedStrategy, Strategy
 
 
 class WinProbabilityStrategy:
-    """Choose a legal action using Monte Carlo win probability conservatively.
-
-    Monte Carlo estimates with small sample counts are deliberately noisy.  A
-    raw estimate can therefore make a speculative reroll with 1/20 wins beat a
-    safe score with 0/20 wins.  This strategy keeps the Monte Carlo estimate as
-    the primary signal, but requires a meaningful probability advantage before
-    abandoning a currently bankable score.
-    """
+    """Choose a legal action using Monte Carlo win probability conservatively."""
 
     def __init__(
         self,
@@ -28,6 +21,7 @@ class WinProbabilityStrategy:
         continuation_strategy: Strategy | None = None,
         opponent_strategy: Strategy | None = None,
         reroll_advantage_threshold: float = 0.08,
+        show_progress: bool = True,
     ) -> None:
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
@@ -41,6 +35,7 @@ class WinProbabilityStrategy:
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
             player_strategy=continuation,
             opponent_strategy=opponent,
+            show_progress=show_progress,
         )
         self._simulation_count = simulation_count
         self._max_candidates = max_candidates
@@ -49,16 +44,10 @@ class WinProbabilityStrategy:
     def decide(self, state: GameState) -> DecisionResult:
         if state.current_dice is None or state.roll_count == 0:
             raise ValueError("WinProbabilityStrategy requires a rolled hand.")
-
         actions = self._candidate_actions(state, self._max_candidates)
-        probabilities = self._evaluator.estimate_actions_win_probability(
-            state, actions, self._simulation_count
-        )
+        probabilities = self._evaluator.estimate_actions_win_probability(state, actions, self._simulation_count)
         candidates = tuple(ActionAlternative(action, probabilities[action]) for action in actions)
-        ordered = tuple(
-            sorted(candidates, key=lambda candidate: self._sort_key(state, candidate), reverse=True)
-        )
-
+        ordered = tuple(sorted(candidates, key=lambda candidate: self._sort_key(state, candidate), reverse=True))
         best = self._select_robust_action(state, ordered)
         return DecisionResult(
             action=best.action,
@@ -67,32 +56,15 @@ class WinProbabilityStrategy:
             reasoning=self._reasoning(best.action, best.expected_value),
         )
 
-    def _select_robust_action(
-        self,
-        state: GameState,
-        ordered: tuple[ActionAlternative, ...],
-    ) -> ActionAlternative:
-        """Prevent tiny Monte Carlo noise from forcing speculative rerolls."""
+    def _select_robust_action(self, state: GameState, ordered: tuple[ActionAlternative, ...]) -> ActionAlternative:
         best = ordered[0]
         if best.action.type is not ActionType.REROLL:
             return best
-
-        score_candidates = tuple(
-            candidate for candidate in ordered if candidate.action.type is ActionType.SCORE
-        )
+        score_candidates = tuple(candidate for candidate in ordered if candidate.action.type is ActionType.SCORE)
         if not score_candidates:
             return best
-
-        best_score = max(
-            score_candidates,
-            key=lambda candidate: self._score_action_key(state, candidate),
-        )
+        best_score = max(score_candidates, key=lambda candidate: self._score_action_key(state, candidate))
         advantage = best.expected_value - best_score.expected_value
-
-        # With small N, a difference such as 1/20 vs 0/20 is not enough evidence
-        # to sacrifice a bankable score.  As N grows, the same threshold becomes
-        # increasingly conservative only when the measured advantage is genuinely
-        # small, while strong reroll opportunities remain untouched.
         if advantage < self._reroll_advantage_threshold:
             return best_score
         return best
@@ -118,45 +90,23 @@ class WinProbabilityStrategy:
         score_actions = list(ActionGenerator.score_actions(state))
         reroll_actions: list[Action] = []
         if state.roll_count < 3:
-            reroll_actions = [
-                action
-                for action in ActionGenerator.reroll_actions(state.held_indices)
-                if len(action.held_indices) < 5
-            ]
-
+            reroll_actions = [action for action in ActionGenerator.reroll_actions(state.held_indices) if len(action.held_indices) < 5]
         actions = score_actions + reroll_actions
         if max_candidates is None or len(actions) <= max_candidates:
             return tuple(actions)
         if not reroll_actions:
-            return tuple(
-                sorted(
-                    score_actions,
-                    key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
-                    reverse=True,
-                )[:max_candidates]
-            )
-
+            return tuple(sorted(score_actions, key=lambda action: WinProbabilityStrategy._candidate_priority(state, action), reverse=True)[:max_candidates])
         score_slots = min(len(score_actions), max(4, max_candidates // 2))
         reroll_slots = min(len(reroll_actions), max_candidates - score_slots)
         if reroll_slots < 4 and len(score_actions) >= 4:
             reroll_slots = 4
             score_slots = max_candidates - reroll_slots
-
-        ranked_scores = sorted(
-            score_actions,
-            key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
-            reverse=True,
-        )[:score_slots]
-        ranked_rerolls = sorted(
-            reroll_actions,
-            key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
-            reverse=True,
-        )[:reroll_slots]
+        ranked_scores = sorted(score_actions, key=lambda action: WinProbabilityStrategy._candidate_priority(state, action), reverse=True)[:score_slots]
+        ranked_rerolls = sorted(reroll_actions, key=lambda action: WinProbabilityStrategy._candidate_priority(state, action), reverse=True)[:reroll_slots]
         return tuple(ranked_scores + ranked_rerolls)
 
     @staticmethod
     def _candidate_priority(state: GameState, action: Action) -> tuple[float, float, float, float, tuple[int, ...]]:
-        """Pre-rank candidates only to limit search; preserve strategic patterns."""
         assert state.current_dice is not None
         player = state.players[state.current_player]
         if action.type is ActionType.SCORE:
@@ -170,23 +120,14 @@ class WinProbabilityStrategy:
                 elif projected >= 50:
                     bonus = min(8.75, (projected - 42) * 0.4)
             return (score + bonus, score, bonus, 1.0, ())
-
         held_values = [state.current_dice[index] for index in action.held_indices]
         counts: dict[int, int] = {}
         for value in held_values:
             counts[value] = counts.get(value, 0) + 1
         duplicate_strength = max((value * count * count for value, count in counts.items()), default=0)
         straight_length = float(WinProbabilityStrategy._best_straight_length(held_values))
-        upper_alignment = 0.0
-        if held_values:
-            upper_alignment = max(held_values.count(face) * face for face in range(1, 7))
-        return (
-            float(duplicate_strength),
-            straight_length,
-            upper_alignment,
-            float(sum(held_values)),
-            tuple(-index for index in action.held_indices),
-        )
+        upper_alignment = max((held_values.count(face) * face for face in range(1, 7)), default=0)
+        return (float(duplicate_strength), straight_length, upper_alignment, float(sum(held_values)), tuple(-index for index in action.held_indices))
 
     @staticmethod
     def _best_straight_length(values: list[int]) -> int:
@@ -210,13 +151,7 @@ class WinProbabilityStrategy:
             assert action.selected_category is not None
             assert state.current_dice is not None
             immediate_score = float(ScoreCalculator.calculate(action.selected_category, state.current_dice))
-        return (
-            candidate.expected_value,
-            immediate_score,
-            1 if action.type is ActionType.SCORE else 0,
-            tuple(-index for index in action.held_indices),
-            action.selected_category.value if action.selected_category is not None else "",
-        )
+        return (candidate.expected_value, immediate_score, 1 if action.type is ActionType.SCORE else 0, tuple(-index for index in action.held_indices), action.selected_category.value if action.selected_category is not None else "")
 
     @staticmethod
     def _reasoning(action: Action, probability: float) -> str:
