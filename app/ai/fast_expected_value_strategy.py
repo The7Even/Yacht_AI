@@ -1,10 +1,11 @@
 """Fast, one-step expected-value strategy for benchmark runs.
 
-This strategy is intentionally separate from ExpectedValueStrategy.  It evaluates
+This strategy is intentionally separate from ExpectedValueStrategy. It evaluates
 all legal hold choices, but only one reroll ahead, making benchmark runs practical
 without changing the exact strategy used by the application.
 """
 
+from functools import lru_cache
 from itertools import product
 
 from app.core.categories import ALL_CATEGORIES, Category
@@ -32,10 +33,24 @@ class FastExpectedValueStrategy:
         if not available:
             raise ValueError("The active player has no categories available.")
 
+        return self._decide_cached(dice, frozenset(state.held_indices), available, state.roll_count)
+
+    @classmethod
+    @lru_cache(maxsize=50_000)
+    def _decide_cached(
+        cls,
+        dice: tuple[int, ...],
+        held_indices: frozenset[int],
+        available: tuple[Category, ...],
+        roll_count: int,
+    ) -> DecisionResult:
         score_values = {
             category: ScoreCalculator.calculate(category, dice) for category in available
         }
-        best_category = max(available, key=lambda category: (score_values[category], -ALL_CATEGORIES.index(category)))
+        best_category = max(
+            available,
+            key=lambda category: (score_values[category], -ALL_CATEGORIES.index(category)),
+        )
         candidates = [
             ActionAlternative(
                 Action(ActionType.SCORE, selected_category=best_category),
@@ -43,18 +58,21 @@ class FastExpectedValueStrategy:
             )
         ]
 
-        if state.roll_count < MAX_ROLLS_PER_TURN:
-            for action in ActionGenerator.reroll_actions(state.held_indices):
+        if roll_count < MAX_ROLLS_PER_TURN:
+            for action in ActionGenerator.reroll_actions(held_indices):
                 if len(action.held_indices) == DICE_COUNT:
                     continue
-                value = self._one_step_value(dice, action.held_indices, available)
+                value = cls._one_step_value(dice, action.held_indices, available)
                 candidates.append(ActionAlternative(action, value))
 
-        candidates.sort(key=lambda candidate: (
-            candidate.expected_value,
-            1 if candidate.action.type is ActionType.SCORE else 0,
-            len(candidate.action.held_indices),
-        ), reverse=True)
+        candidates.sort(
+            key=lambda candidate: (
+                candidate.expected_value,
+                1 if candidate.action.type is ActionType.SCORE else 0,
+                len(candidate.action.held_indices),
+            ),
+            reverse=True,
+        )
         best = candidates[0]
         return DecisionResult(
             action=best.action,
@@ -64,6 +82,7 @@ class FastExpectedValueStrategy:
         )
 
     @staticmethod
+    @lru_cache(maxsize=100_000)
     def _one_step_value(
         dice: tuple[int, ...], held_indices: tuple[int, ...], available: tuple[Category, ...]
     ) -> float:
