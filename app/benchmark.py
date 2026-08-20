@@ -102,7 +102,7 @@ def _progress_line(completed: int, total: int, started: float, matchup: str, gam
     width = 36
     filled = int(width * fraction)
     bar = "#" * filled + "." * (width - filled)
-    turn_text = "complete" if turn == 0 else f"turn {turn}/12"
+    turn_text = "complete" if turn == 0 else f"turn {min((turn + 1) // 2, 12)}/12"
     text = (
         f"Overall [{bar}] {fraction * 100:5.1f}% | "
         f"{completed}/{total} games | "
@@ -110,8 +110,8 @@ def _progress_line(completed: int, total: int, started: float, matchup: str, gam
         f"ETA {_format_duration(remaining)} | "
         f"Current: {matchup} | game {game}/{games} | {turn_text}"
     )
-    # Keep exactly one live progress line.  Do not move the cursor vertically,
-    # because repeated callbacks happen many times during a single game.
+    # Keep exactly one live progress line. Repeated callbacks during a game
+    # overwrite this line instead of appending another line to the terminal.
     sys.stdout.write("\r\x1b[2K" + text)
     sys.stdout.flush()
 
