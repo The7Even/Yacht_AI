@@ -20,6 +20,6 @@ def test_match_scores_are_valid() -> None:
         seed=7,
     )
 
-    assert result.player_one_score >= 0
-    assert result.player_two_score >= 0
-    assert result.player_one_score != result.player_two_score or result.draw
+    assert result.player_score >= 0
+    assert result.ai_score >= 0
+    assert result.player_score != result.ai_score or result.draw
