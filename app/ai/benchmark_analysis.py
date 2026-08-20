@@ -130,9 +130,9 @@ class BenchmarkReport:
             two["score"] += result.player_two_total_score
             two["opponent_score"] += result.player_one_total_score
             two["started_games"] += result.strategy_two_started_games
-            two["started_wins"] += result.player_two_wins - result.strategy_one_second_player_wins
+            two["started_wins"] += result.strategy_two_started_wins
             two["second_games"] += result.strategy_one_started_games
-            two["second_wins"] += result.strategy_one_started_wins
+            two["second_wins"] += result.strategy_two_second_player_wins
 
         stats = tuple(
             StrategyStats(
