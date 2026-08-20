@@ -4,8 +4,8 @@ from app.core.game_state import GameState
 from app.core.scoring import ScoreCalculator
 
 from .action_generator import Action, ActionAlternative, ActionGenerator, ActionType, DecisionResult
-from .fast_expected_value_strategy import FastExpectedValueStrategy
 from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
+from .monte_carlo_rollout_strategy import MonteCarloRolloutStrategy
 from .strategy import RuleBasedStrategy, Strategy
 
 
@@ -26,9 +26,10 @@ class WinProbabilityStrategy:
         if max_candidates is not None and max_candidates <= 0:
             raise ValueError("max_candidates must be positive when provided.")
 
-        # Keep the continuation policy deterministic and strong, while limiting
-        # the number of expensive Monte Carlo branches considered at each turn.
-        continuation = continuation_strategy or FastExpectedValueStrategy()
+        # Monte Carlo rollouts need a very cheap continuation policy. The
+        # rollout strategy evaluates the same Yacht rules without recursively
+        # performing EV enumeration, which prevents nested search explosion.
+        continuation = continuation_strategy or MonteCarloRolloutStrategy()
         opponent = opponent_strategy or RuleBasedStrategy()
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
             player_strategy=continuation,
@@ -83,10 +84,6 @@ class WinProbabilityStrategy:
             )
             return tuple(ranked_scores[:max_candidates])
 
-        # Monte Carlo cost grows almost linearly with the number of candidates.
-        # Reserve half the budget for scoring choices and half for rerolls so a
-        # strong immediate score can never be discarded merely because rerolls
-        # have more combinatorial variety.
         score_slots = max(1, max_candidates // 2)
         reroll_slots = max_candidates - score_slots
 
