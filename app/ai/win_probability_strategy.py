@@ -4,8 +4,8 @@ from app.core.game_state import GameState
 from app.core.scoring import ScoreCalculator
 
 from .action_generator import Action, ActionAlternative, ActionGenerator, ActionType, DecisionResult
-from .fast_expected_value_strategy import FastExpectedValueStrategy
 from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
+from .monte_carlo_rollout_strategy import MonteCarloRolloutStrategy
 from .strategy import RuleBasedStrategy, Strategy
 
 
@@ -26,12 +26,10 @@ class WinProbabilityStrategy:
         if max_candidates is not None and max_candidates <= 0:
             raise ValueError("max_candidates must be positive when provided.")
 
-        # A WinProbability decision is a one-step Monte Carlo decision.  The
-        # simulated remainder of the game therefore needs a competent policy,
-        # but recursively invoking WinProbabilityStrategy would explode the
-        # search tree.  FastEV is a deterministic, inexpensive continuation
-        # policy and is substantially stronger than the old RuleBased default.
-        continuation = continuation_strategy or FastExpectedValueStrategy()
+        # Monte Carlo needs a rollout policy that is much cheaper than FastEV.
+        # FastEV may enumerate thousands of reroll outcomes per decision, which
+        # becomes prohibitive when repeated across many simulated games.
+        continuation = continuation_strategy or MonteCarloRolloutStrategy()
         opponent = opponent_strategy or RuleBasedStrategy()
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
             player_strategy=continuation,
@@ -49,9 +47,7 @@ class WinProbabilityStrategy:
         probabilities = self._evaluator.estimate_actions_win_probability(
             state, actions, self._simulation_count
         )
-        candidates = tuple(
-            ActionAlternative(action, probabilities[action]) for action in actions
-        )
+        candidates = tuple(ActionAlternative(action, probabilities[action]) for action in actions)
         ordered = tuple(
             sorted(candidates, key=lambda candidate: self._sort_key(state, candidate), reverse=True)
         )
