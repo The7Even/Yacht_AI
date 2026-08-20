@@ -62,7 +62,8 @@ class FastExpectedValueStrategy:
             for action in ActionGenerator.reroll_actions(held_indices):
                 if len(action.held_indices) == DICE_COUNT:
                     continue
-                value = cls._one_step_value(dice, action.held_indices, available)
+                held_values = tuple(dice[index] for index in action.held_indices)
+                value = cls._one_step_value(dice, held_values, available)
                 candidates.append(ActionAlternative(action, value))
 
         candidates.sort(
@@ -84,17 +85,24 @@ class FastExpectedValueStrategy:
     @staticmethod
     @lru_cache(maxsize=100_000)
     def _one_step_value(
-        dice: tuple[int, ...], held_indices: tuple[int, ...], available: tuple[Category, ...]
+        dice: tuple[int, ...], held_values: tuple[int, ...], available: tuple[Category, ...]
     ) -> float:
-        rerolled = tuple(index for index in range(DICE_COUNT) if index not in held_indices)
-        if not rerolled:
-            return float(max(ScoreCalculator.calculate(category, dice) for category in available))
+        """Compute one-step EV from dice values, ignoring physically irrelevant indices.
+
+        Dice positions do not affect Yacht scoring, so canonicalizing the held
+        values lets equivalent states reached through different index choices
+        share the same expensive expectation calculation.
+        """
+        canonical_dice = tuple(sorted(dice))
+        canonical_held = tuple(sorted(held_values))
+        rerolled_count = DICE_COUNT - len(canonical_held)
+        if rerolled_count == 0:
+            return float(max(ScoreCalculator.calculate(category, canonical_dice) for category in available))
 
         total = 0.0
-        outcomes = 6 ** len(rerolled)
-        for faces in product(range(MIN_FACE, MAX_FACE + 1), repeat=len(rerolled)):
-            result = list(dice)
-            for index, face in zip(rerolled, faces, strict=True):
-                result[index] = face
+        outcomes = 6 ** rerolled_count
+        for faces in product(range(MIN_FACE, MAX_FACE + 1), repeat=rerolled_count):
+            result = list(canonical_held)
+            result.extend(faces)
             total += max(ScoreCalculator.calculate(category, result) for category in available)
         return total / outcomes
