@@ -4,7 +4,7 @@ from collections import Counter
 
 from app.core.categories import ALL_CATEGORIES, Category
 from app.core.game_engine import MAX_ROLLS_PER_TURN
-from app.core.game_state import GameState
+from app.core.game_state import GameState, PlayerId
 from app.core.scoring import ScoreCalculator
 
 from .action_generator import Action, ActionType, DecisionResult
@@ -26,7 +26,8 @@ class MonteCarloRolloutStrategy:
             raise ValueError("MonteCarloRolloutStrategy requires a rolled hand.")
 
         player = state.players[state.current_player]
-        opponent = state.players[state.other_player]
+        opponent_id = PlayerId.AI if state.current_player is PlayerId.PLAYER else PlayerId.PLAYER
+        opponent = state.players[opponent_id]
         available = tuple(category for category in ALL_CATEGORIES if category not in player.used_categories)
         if not available:
             raise ValueError("The active player has no categories available.")
@@ -34,7 +35,10 @@ class MonteCarloRolloutStrategy:
         dice = state.current_dice
         scores = {category: ScoreCalculator.calculate(category, dice) for category in available}
         score_gap = player.total_score - opponent.total_score
-        turns_left = max(len(player.remaining_categories), len(opponent.remaining_categories))
+        turns_left = max(
+            len(ALL_CATEGORIES) - len(player.used_categories),
+            len(ALL_CATEGORIES) - len(opponent.used_categories),
+        )
 
         completed = [
             category for category in self._COMPLETED_PRIORITY
