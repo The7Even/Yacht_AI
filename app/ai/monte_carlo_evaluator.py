@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from copy import deepcopy
+from dataclasses import dataclass
 import random
 
 from app.core.dice import DiceRoller
@@ -11,6 +12,13 @@ from app.core.game_state import GameState, PlayerId
 from .action_generator import Action, ActionType
 from .ai_player import AIPlayer
 from .strategy import RuleBasedStrategy, Strategy
+
+
+@dataclass(frozen=True)
+class ActionStatistics:
+    win_probability: float
+    average_score: float
+    average_opponent_score: float
 
 
 class MonteCarloWinProbabilityEvaluator:
@@ -60,18 +68,31 @@ class MonteCarloWinProbabilityEvaluator:
         simulation_count: int = 10_000,
         perspective: PlayerId | None = None,
     ) -> dict[Action, float]:
+        return {
+            action: statistics.win_probability
+            for action, statistics in self.estimate_actions_statistics(
+                game_state, actions, simulation_count, perspective
+            ).items()
+        }
+
+    def estimate_actions_statistics(
+        self,
+        game_state: GameState,
+        actions: Iterable[Action],
+        simulation_count: int = 10_000,
+        perspective: PlayerId | None = None,
+    ) -> dict[Action, ActionStatistics]:
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
         candidates = tuple(actions)
         if not candidates:
             return {}
 
-        # Common-random-number comparison: each candidate starts each rollout
-        # from the same scenario seed. This reduces variance caused purely by
-        # different lucky/unlucky future dice streams.
+        # Common-random-number comparison: every candidate sees the same
+        # sequence of future scenarios, making action differences less noisy.
         scenario_seeds = self._scenario_seeds(simulation_count)
         return {
-            action: self._estimate_with_scenario_seeds(
+            action: self._estimate_statistics_with_scenario_seeds(
                 game_state, action, simulation_count, perspective, scenario_seeds
             )
             for action in candidates
@@ -81,29 +102,44 @@ class MonteCarloWinProbabilityEvaluator:
         rng = random.Random(self._seed)
         return tuple(rng.randrange(0, 2**63) for _ in range(simulation_count))
 
-    def _estimate_with_scenario_seeds(
+    def _estimate_statistics_with_scenario_seeds(
         self,
         game_state: GameState,
         action: Action,
         simulation_count: int,
         perspective: PlayerId | None,
         scenario_seeds: tuple[int, ...],
-    ) -> float:
+    ) -> ActionStatistics:
         player_id = perspective or game_state.current_player
         if game_state.game_over:
-            return self._final_result(game_state, player_id)
+            opponent = PlayerId.AI if player_id is PlayerId.PLAYER else PlayerId.PLAYER
+            return ActionStatistics(
+                self._final_result(game_state, player_id),
+                float(game_state.players[player_id].total_score),
+                float(game_state.players[opponent].total_score),
+            )
         if not game_state.game_started:
             raise ValueError("Monte Carlo evaluation requires a started game.")
 
+        opponent_id = PlayerId.AI if player_id is PlayerId.PLAYER else PlayerId.PLAYER
         players = self._make_players(player_id)
-        total = 0.0
+        wins = 0.0
+        total_score = 0.0
+        total_opponent_score = 0.0
         for seed in scenario_seeds:
             engine = GameEngine(DiceRoller(random.Random(seed)))
             engine.state = deepcopy(game_state)
             self._apply_candidate_action(engine, action)
             self._finish_game(engine, players)
-            total += self._final_result(engine.state, player_id)
-        return total / simulation_count
+            wins += self._final_result(engine.state, player_id)
+            total_score += engine.state.players[player_id].total_score
+            total_opponent_score += engine.state.players[opponent_id].total_score
+
+        return ActionStatistics(
+            win_probability=wins / simulation_count,
+            average_score=total_score / simulation_count,
+            average_opponent_score=total_opponent_score / simulation_count,
+        )
 
     def _make_players(self, perspective: PlayerId) -> dict[PlayerId, AIPlayer]:
         return {
