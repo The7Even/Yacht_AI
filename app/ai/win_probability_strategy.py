@@ -10,7 +10,14 @@ from .strategy import RuleBasedStrategy, Strategy
 
 
 class WinProbabilityStrategy:
-    """Choose the legal action with the highest estimated chance of winning."""
+    """Choose a legal action using Monte Carlo win probability conservatively.
+
+    Monte Carlo estimates with small sample counts are deliberately noisy.  A
+    raw estimate can therefore make a speculative reroll with 1/20 wins beat a
+    safe score with 0/20 wins.  This strategy keeps the Monte Carlo estimate as
+    the primary signal, but requires a meaningful probability advantage before
+    abandoning a currently bankable score.
+    """
 
     def __init__(
         self,
@@ -20,11 +27,14 @@ class WinProbabilityStrategy:
         max_candidates: int | None = 12,
         continuation_strategy: Strategy | None = None,
         opponent_strategy: Strategy | None = None,
+        reroll_advantage_threshold: float = 0.08,
     ) -> None:
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
         if max_candidates is not None and max_candidates <= 0:
             raise ValueError("max_candidates must be positive when provided.")
+        if not 0.0 <= reroll_advantage_threshold <= 1.0:
+            raise ValueError("reroll_advantage_threshold must be between 0 and 1.")
 
         continuation = continuation_strategy or MonteCarloRolloutStrategy()
         opponent = opponent_strategy or RuleBasedStrategy()
@@ -34,6 +44,7 @@ class WinProbabilityStrategy:
         )
         self._simulation_count = simulation_count
         self._max_candidates = max_candidates
+        self._reroll_advantage_threshold = reroll_advantage_threshold
 
     def decide(self, state: GameState) -> DecisionResult:
         if state.current_dice is None or state.roll_count == 0:
@@ -44,14 +55,63 @@ class WinProbabilityStrategy:
             state, actions, self._simulation_count
         )
         candidates = tuple(ActionAlternative(action, probabilities[action]) for action in actions)
-        ordered = tuple(sorted(candidates, key=lambda candidate: self._sort_key(state, candidate), reverse=True))
-        best = ordered[0]
+        ordered = tuple(
+            sorted(candidates, key=lambda candidate: self._sort_key(state, candidate), reverse=True)
+        )
+
+        best = self._select_robust_action(state, ordered)
         return DecisionResult(
             action=best.action,
             expected_value=None,
             alternatives=ordered[:3],
             reasoning=self._reasoning(best.action, best.expected_value),
         )
+
+    def _select_robust_action(
+        self,
+        state: GameState,
+        ordered: tuple[ActionAlternative, ...],
+    ) -> ActionAlternative:
+        """Prevent tiny Monte Carlo noise from forcing speculative rerolls."""
+        best = ordered[0]
+        if best.action.type is not ActionType.REROLL:
+            return best
+
+        score_candidates = tuple(
+            candidate for candidate in ordered if candidate.action.type is ActionType.SCORE
+        )
+        if not score_candidates:
+            return best
+
+        best_score = max(
+            score_candidates,
+            key=lambda candidate: self._score_action_key(state, candidate),
+        )
+        advantage = best.expected_value - best_score.expected_value
+
+        # With small N, a difference such as 1/20 vs 0/20 is not enough evidence
+        # to sacrifice a bankable score.  As N grows, the same threshold becomes
+        # increasingly conservative only when the measured advantage is genuinely
+        # small, while strong reroll opportunities remain untouched.
+        if advantage < self._reroll_advantage_threshold:
+            return best_score
+        return best
+
+    @staticmethod
+    def _score_action_key(state: GameState, candidate: ActionAlternative) -> tuple[float, float, str]:
+        action = candidate.action
+        assert action.selected_category is not None
+        assert state.current_dice is not None
+        immediate = float(ScoreCalculator.calculate(action.selected_category, state.current_dice))
+        bonus = 0.0
+        player = state.players[state.current_player]
+        if action.selected_category.is_upper and not player.has_upper_bonus:
+            projected = player.upper_total + int(immediate)
+            if projected >= 63:
+                bonus = 35.0
+            elif projected >= 50:
+                bonus = min(8.75, max(0.0, projected - 42.0) * 0.4)
+        return (immediate + bonus, immediate, action.selected_category.value)
 
     @staticmethod
     def _candidate_actions(state: GameState, max_candidates: int | None = None) -> tuple[Action, ...]:
@@ -69,11 +129,13 @@ class WinProbabilityStrategy:
             return tuple(actions)
         if not reroll_actions:
             return tuple(
-                sorted(score_actions, key=lambda action: WinProbabilityStrategy._candidate_priority(state, action), reverse=True)[:max_candidates]
+                sorted(
+                    score_actions,
+                    key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
+                    reverse=True,
+                )[:max_candidates]
             )
 
-        # Keep a broad, balanced portfolio instead of letting an immediate-score
-        # heuristic decide which actions Monte Carlo is allowed to see.
         score_slots = min(len(score_actions), max(4, max_candidates // 2))
         reroll_slots = min(len(reroll_actions), max_candidates - score_slots)
         if reroll_slots < 4 and len(score_actions) >= 4:
