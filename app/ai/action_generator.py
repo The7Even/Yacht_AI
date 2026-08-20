@@ -53,13 +53,28 @@ class DecisionResult:
     def selected_category(self) -> Category | None:
         return self.action.selected_category
 
+    @property
+    def win_probability(self) -> float | None:
+        """Estimated win probability when alternatives contain probability scores."""
+        return self.alternatives[0].expected_value if self.alternatives else None
+
 
 @dataclass(frozen=True)
 class ActionAlternative:
-    """A candidate action and its evaluated expected value."""
+    """A candidate action and its evaluated value.
+
+    The existing ``expected_value`` field is retained for compatibility with
+    the EV strategies; for Monte Carlo alternatives it represents probability.
+    ``win_probability`` is the explicit alias used by win-probability clients.
+    """
 
     action: Action
     expected_value: float
+
+    @property
+    def win_probability(self) -> float:
+        """Return the value as a win probability for Monte Carlo evaluations."""
+        return self.expected_value
 
 
 class ActionGenerator:
