@@ -10,7 +10,6 @@ from app.core.game_state import GameState, PlayerId
 
 from .action_generator import Action, ActionType
 from .ai_player import AIPlayer
-from .monte_carlo_rollout_strategy import MonteCarloRolloutStrategy
 from .strategy import RuleBasedStrategy, Strategy
 
 
@@ -35,7 +34,6 @@ class MonteCarloWinProbabilityEvaluator:
         simulation_count: int = 10_000,
         perspective: PlayerId | None = None,
     ) -> float:
-        """Estimate the chance that *perspective* wins after applying *action*."""
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
         player_id = perspective or game_state.current_player
@@ -62,31 +60,34 @@ class MonteCarloWinProbabilityEvaluator:
         simulation_count: int = 10_000,
         perspective: PlayerId | None = None,
     ) -> dict[Action, float]:
-        """Evaluate several candidate actions with deterministic independent RNG streams."""
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
         candidates = tuple(actions)
         if not candidates:
             return {}
 
+        # Common-random-number comparison: each candidate starts each rollout
+        # from the same scenario seed. This reduces variance caused purely by
+        # different lucky/unlucky future dice streams.
+        scenario_seeds = self._scenario_seeds(simulation_count)
         return {
-            action: self._estimate_with_rng(
-                game_state,
-                action,
-                simulation_count,
-                perspective,
-                random.Random(None if self._seed is None else self._seed + index),
+            action: self._estimate_with_scenario_seeds(
+                game_state, action, simulation_count, perspective, scenario_seeds
             )
-            for index, action in enumerate(candidates)
+            for action in candidates
         }
 
-    def _estimate_with_rng(
+    def _scenario_seeds(self, simulation_count: int) -> tuple[int, ...]:
+        rng = random.Random(self._seed)
+        return tuple(rng.randrange(0, 2**63) for _ in range(simulation_count))
+
+    def _estimate_with_scenario_seeds(
         self,
         game_state: GameState,
         action: Action,
         simulation_count: int,
         perspective: PlayerId | None,
-        rng: random.Random,
+        scenario_seeds: tuple[int, ...],
     ) -> float:
         player_id = perspective or game_state.current_player
         if game_state.game_over:
@@ -96,8 +97,8 @@ class MonteCarloWinProbabilityEvaluator:
 
         players = self._make_players(player_id)
         total = 0.0
-        for _ in range(simulation_count):
-            engine = GameEngine(DiceRoller(rng))
+        for seed in scenario_seeds:
+            engine = GameEngine(DiceRoller(random.Random(seed)))
             engine.state = deepcopy(game_state)
             self._apply_candidate_action(engine, action)
             self._finish_game(engine, players)
@@ -105,7 +106,6 @@ class MonteCarloWinProbabilityEvaluator:
         return total / simulation_count
 
     def _make_players(self, perspective: PlayerId) -> dict[PlayerId, AIPlayer]:
-        """Create rollout players once per candidate instead of once per simulation."""
         return {
             PlayerId.PLAYER: AIPlayer(
                 self._player_strategy if PlayerId.PLAYER is perspective else self._opponent_strategy
@@ -135,7 +135,6 @@ class MonteCarloWinProbabilityEvaluator:
             engine.hold_dice(index)
 
     def _finish_game(self, engine: GameEngine, players: dict[PlayerId, AIPlayer]) -> None:
-        """Continue from the candidate action until both scorecards are complete."""
         while not engine.is_game_over():
             active_player = engine.state.current_player
             self._finish_turn(engine, players[active_player])
@@ -153,9 +152,7 @@ class MonteCarloWinProbabilityEvaluator:
                     raise RuntimeError("Strategy returned an incomplete score action.")
                 engine.score_category(decision.selected_category)
             elif decision.action.type is ActionType.REROLL:
-                MonteCarloWinProbabilityEvaluator._set_held_indices(
-                    engine, frozenset(decision.held_indices)
-                )
+                MonteCarloWinProbabilityEvaluator._set_held_indices(engine, frozenset(decision.held_indices))
                 engine.roll_dice()
             else:
                 raise RuntimeError("Simulation strategies must return SCORE or REROLL actions.")
