@@ -1,6 +1,7 @@
 from copy import deepcopy
 
 from app.ai.action_generator import Action, ActionType
+from app.ai.fast_expected_value_strategy import FastExpectedValueStrategy
 from app.ai.win_probability_strategy import WinProbabilityStrategy
 from app.core.categories import ALL_CATEGORIES, Category
 from app.core.game_state import GameState, PlayerId
@@ -86,6 +87,25 @@ def test_strategy_does_not_mutate_game_state() -> None:
     WinProbabilityStrategy(evaluator=evaluator, simulation_count=10).decide(state)
 
     assert state == original
+
+
+def test_default_continuation_policy_is_fast_ev() -> None:
+    strategy = WinProbabilityStrategy(simulation_count=1)
+
+    assert isinstance(strategy._evaluator._player_strategy, FastExpectedValueStrategy)
+
+
+def test_continuation_and_opponent_policies_are_injectable() -> None:
+    continuation = FastExpectedValueStrategy()
+    opponent = FastExpectedValueStrategy()
+    strategy = WinProbabilityStrategy(
+        simulation_count=1,
+        continuation_strategy=continuation,
+        opponent_strategy=opponent,
+    )
+
+    assert strategy._evaluator._player_strategy is continuation
+    assert strategy._evaluator._opponent_strategy is opponent
 
 
 def test_requires_positive_simulation_count() -> None:
