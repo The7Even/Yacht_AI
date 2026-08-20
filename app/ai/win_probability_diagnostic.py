@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.ai.monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
-from app.ai.strategy import DecisionResult
-from app.domain.action import Action
-from app.domain.game_state import GameState
+from app.core.game_state import GameState
+
+from .action_generator import Action
+from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
 
 
 @dataclass(frozen=True)
