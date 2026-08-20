@@ -22,15 +22,17 @@ def test_rollout_scores_completed_large_straight() -> None:
 
 
 def test_rollout_considers_upper_bonus() -> None:
-    state = state_with_dice((6, 6, 6, 2, 3))
+    state = state_with_dice((6, 6, 6, 2, 3), roll_count=3)
     player = state.players[state.current_player]
     player.category_scores = {
-        Category.ONES: 1,
-        Category.TWOS: 2,
-        Category.THREES: 3,
+        Category.ONES: 5,
+        Category.TWOS: 10,
+        Category.THREES: 15,
         Category.FOURS: 8,
         Category.FIVES: 10,
     }
+    # Upper total is 48, so recording 18 Sixes points reaches 66 and earns
+    # the 35-point bonus. On the final roll the rollout must bank Sixes.
     result = MonteCarloRolloutStrategy().decide(state)
     assert result.action.selected_category is Category.SIXES
 
