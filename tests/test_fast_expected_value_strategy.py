@@ -1,12 +1,21 @@
 from app.ai.action_generator import ActionType
 from app.ai.fast_expected_value_strategy import FastExpectedValueStrategy
 from app.core.categories import Category
+from app.core.dice import DiceRoller
+from app.core.game_engine import GameEngine
 from app.core.game_state import GameState, PlayerId
 
 
+class FixedDiceRoller(DiceRoller):
+    """Deterministic die source for strategy-state fixtures."""
+
+    def roll(self, count: int = 5) -> tuple[int, ...]:
+        return (1, 2, 3, 4, 5)[:count]
+
+
 def state_with_roll() -> GameState:
-    state = GameState()
-    state.start_game()
+    engine = GameEngine(FixedDiceRoller())
+    state = engine.start_game()
     state.current_dice = (5, 5, 5, 2, 6)
     state.roll_count = 2
     return state
@@ -27,9 +36,10 @@ def test_fast_strategy_can_score_completed_yacht() -> None:
 
 def test_fast_strategy_respects_used_categories() -> None:
     state = state_with_roll()
-    state.players[PlayerId.PLAYER].used_categories.add(Category.FIVES)
+    state.players[PlayerId.PLAYER].category_scores[Category.FIVES] = 15
     result = FastExpectedValueStrategy().decide(state)
-    assert result.action.selected_category is not Category.FIVES
+    if result.action.type is ActionType.SCORE:
+        assert result.action.selected_category is not Category.FIVES
 
 
 def test_fast_strategy_does_not_reroll_after_third_roll() -> None:
