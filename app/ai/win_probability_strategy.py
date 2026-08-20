@@ -4,8 +4,9 @@ from app.core.game_state import GameState
 from app.core.scoring import ScoreCalculator
 
 from .action_generator import Action, ActionAlternative, ActionGenerator, ActionType, DecisionResult
+from .fast_expected_value_strategy import FastExpectedValueStrategy
 from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
-from .strategy import RuleBasedStrategy
+from .strategy import RuleBasedStrategy, Strategy
 
 
 class WinProbabilityStrategy:
@@ -17,14 +18,24 @@ class WinProbabilityStrategy:
         evaluator: MonteCarloWinProbabilityEvaluator | None = None,
         simulation_count: int = 300,
         max_candidates: int | None = None,
+        continuation_strategy: Strategy | None = None,
+        opponent_strategy: Strategy | None = None,
     ) -> None:
         if simulation_count <= 0:
             raise ValueError("simulation_count must be positive.")
         if max_candidates is not None and max_candidates <= 0:
             raise ValueError("max_candidates must be positive when provided.")
+
+        # A WinProbability decision is a one-step Monte Carlo decision.  The
+        # simulated remainder of the game therefore needs a competent policy,
+        # but recursively invoking WinProbabilityStrategy would explode the
+        # search tree.  FastEV is a deterministic, inexpensive continuation
+        # policy and is substantially stronger than the old RuleBased default.
+        continuation = continuation_strategy or FastExpectedValueStrategy()
+        opponent = opponent_strategy or RuleBasedStrategy()
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
-            player_strategy=RuleBasedStrategy(),
-            opponent_strategy=RuleBasedStrategy(),
+            player_strategy=continuation,
+            opponent_strategy=opponent,
         )
         self._simulation_count = simulation_count
         self._max_candidates = max_candidates
