@@ -17,7 +17,7 @@ class WinProbabilityStrategy:
         *,
         evaluator: MonteCarloWinProbabilityEvaluator | None = None,
         simulation_count: int = 300,
-        max_candidates: int | None = None,
+        max_candidates: int | None = 8,
         continuation_strategy: Strategy | None = None,
         opponent_strategy: Strategy | None = None,
     ) -> None:
@@ -26,10 +26,8 @@ class WinProbabilityStrategy:
         if max_candidates is not None and max_candidates <= 0:
             raise ValueError("max_candidates must be positive when provided.")
 
-        # The continuation policy is deliberately strong and deterministic.
-        # WinProbabilityStrategy should estimate the value of a candidate under
-        # the same competent policy that will actually make subsequent decisions,
-        # rather than switching to a weaker rollout heuristic halfway through.
+        # Keep the continuation policy deterministic and strong, while limiting
+        # the number of expensive Monte Carlo branches considered at each turn.
         continuation = continuation_strategy or FastExpectedValueStrategy()
         opponent = opponent_strategy or RuleBasedStrategy()
         self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
@@ -85,10 +83,12 @@ class WinProbabilityStrategy:
             )
             return tuple(ranked_scores[:max_candidates])
 
+        # Monte Carlo cost grows almost linearly with the number of candidates.
+        # Reserve half the budget for scoring choices and half for rerolls so a
+        # strong immediate score can never be discarded merely because rerolls
+        # have more combinatorial variety.
         score_slots = max(1, max_candidates // 2)
         reroll_slots = max_candidates - score_slots
-        if score_slots + reroll_slots > max_candidates:
-            reroll_slots = max_candidates - score_slots
 
         ranked_scores = sorted(
             score_actions,
