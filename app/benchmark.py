@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 
 from app.ai.benchmark import StrategyBenchmark
+from app.ai.benchmark_analysis import BenchmarkReport
 from app.ai.expected_value_strategy import ExpectedValueStrategy
 from app.ai.game_aware_strategy import GameAwareStrategicExpectedValueStrategy
 from app.ai.strategy import RuleBasedStrategy
@@ -66,6 +67,22 @@ def main() -> None:
             f"{result.strategy_one:<22} {result.strategy_two:<22} "
             f"{result.player_one_wins:>7} {result.player_two_wins:>7} {result.draws:>7} "
             f"{result.player_one_win_rate:>7.1%} {result.average_margin:>9.2f}"
+        )
+
+    report = BenchmarkReport.from_results(results)
+    print()
+    print("Leaderboard")
+    print(
+        f"{'#':>2} {'Strategy':<22} {'Pts%':>7} {'W-L-D':>11} "
+        f"{'Avg':>8} {'Avg Δ':>8} {'1st':>8} {'2nd':>8}"
+    )
+    print("-" * 82)
+    for rank, stats in enumerate(report.leaderboard, start=1):
+        print(
+            f"{rank:>2} {stats.strategy:<22} {stats.points_rate:>6.1%} "
+            f"{stats.wins:>3}-{stats.losses:<3}-{stats.draws:<3} "
+            f"{stats.average_score:>8.2f} {stats.average_margin:>8.2f} "
+            f"{stats.first_player_win_rate:>7.1%} {stats.second_player_win_rate:>7.1%}"
         )
 
 
