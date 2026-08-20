@@ -12,6 +12,8 @@ from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
 class CandidateProbability:
     action: Action
     probability: float
+    average_score: float
+    average_opponent_score: float
 
 
 class WinProbabilityDiagnostic:
@@ -26,13 +28,18 @@ class WinProbabilityDiagnostic:
         actions: tuple[Action, ...],
         simulation_count: int,
     ) -> tuple[CandidateProbability, ...]:
-        probabilities = self._evaluator.estimate_actions_win_probability(
+        stats = self._evaluator.estimate_actions_statistics(
             state, actions, simulation_count
         )
         return tuple(
-            CandidateProbability(action, probabilities[action])
+            CandidateProbability(
+                action,
+                result.win_probability,
+                result.average_score,
+                result.average_opponent_score,
+            )
             for action in actions
-            if action in probabilities
+            if (result := stats.get(action)) is not None
         )
 
     @staticmethod
@@ -40,9 +47,12 @@ class WinProbabilityDiagnostic:
         ranked = sorted(candidates, key=lambda item: item.probability, reverse=True)
         lines = [
             "=== WinProbability Diagnostic ===",
-            "ACTION                                      WIN%",
-            "------------------------------------------------------",
+            "ACTION                                      WIN%    AVG SCORE  AVG OPP",
+            "----------------------------------------------------------------------------",
         ]
         for item in ranked:
-            lines.append(f"{str(item.action):<44} {item.probability:6.1%}")
+            lines.append(
+                f"{str(item.action):<44} {item.probability:6.1%}"
+                f"     {item.average_score:7.2f}    {item.average_opponent_score:7.2f}"
+            )
         return "\n".join(lines)
