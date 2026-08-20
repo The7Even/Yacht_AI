@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Mapping
 
 from app.ai.ai_player import AIPlayer
 from app.ai.strategy import Strategy
@@ -130,3 +130,31 @@ class StrategyBenchmark:
             player_one_total_score=one_score,
             player_two_total_score=two_score,
         )
+
+    def round_robin(
+        self,
+        strategies: Mapping[str, StrategyFactory],
+        games_per_matchup: int = 100,
+    ) -> tuple[BenchmarkResult, ...]:
+        """Run every unordered strategy pair in both player orders."""
+        if len(strategies) < 2:
+            raise ValueError("At least two strategies are required.")
+        if games_per_matchup <= 0:
+            raise ValueError("games_per_matchup must be positive")
+
+        names = tuple(strategies)
+        results: list[BenchmarkResult] = []
+        matchup_index = 0
+        for index, first_name in enumerate(names):
+            for second_name in names[index + 1 :]:
+                first = strategies[first_name]
+                second = strategies[second_name]
+                base_seed = self.seed + matchup_index * games_per_matchup * 2
+                results.append(
+                    StrategyBenchmark(base_seed).run(first, second, games_per_matchup)
+                )
+                results.append(
+                    StrategyBenchmark(base_seed + games_per_matchup).run(second, first, games_per_matchup)
+                )
+                matchup_index += 1
+        return tuple(results)
