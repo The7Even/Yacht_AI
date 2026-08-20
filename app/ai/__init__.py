@@ -9,6 +9,7 @@ from .game_state_evaluator import GameStateEvaluation, GameStateEvaluator
 from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
 from .strategic_expected_value_strategy import StrategicExpectedValueStrategy
 from .upper_expected_value import UpperCategoryExpectedValueEvaluator
+from .win_probability_strategy import WinProbabilityStrategy
 from .strategy import RuleBasedStrategy
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "RuleBasedStrategy",
     "StrategicExpectedValueStrategy",
     "UpperCategoryExpectedValueEvaluator",
+    "WinProbabilityStrategy",
 ]
