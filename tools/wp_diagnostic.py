@@ -28,10 +28,13 @@ def main() -> None:
     if not 1 <= args.roll <= 3:
         raise SystemExit("--roll must be between 1 and 3.")
 
-    state = GameState()
-    state.start_game()
-    state.current_dice = tuple(args.dice)
-    state.roll_count = args.roll
+    # GameState is intentionally a data-only container; game lifecycle changes
+    # belong to GameEngine, so construct the diagnostic state directly.
+    state = GameState(
+        current_dice=tuple(args.dice),
+        roll_count=args.roll,
+        game_started=True,
+    )
 
     strategy = WinProbabilityStrategy(
         simulation_count=args.simulations,
