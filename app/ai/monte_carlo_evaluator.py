@@ -1,6 +1,6 @@
 """Monte Carlo win-probability estimation using the real game engine."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from copy import deepcopy
 from dataclasses import dataclass
 import random
@@ -61,7 +61,7 @@ class MonteCarloWinProbabilityEvaluator:
             simulation_count,
             perspective,
             self._scenario_seeds(simulation_count),
-            progress_label="candidate 1/1",
+            progress_label="WP decision · candidate 1/1",
         )
         return statistics.win_probability
 
@@ -99,14 +99,7 @@ class MonteCarloWinProbabilityEvaluator:
         results: dict[Action, ActionStatistics] = {}
 
         if self._show_progress:
-            self._print_progress(
-                0,
-                total_work,
-                started,
-                len(candidates),
-                simulation_count,
-                detail=f"WP decision · candidate 0/{len(candidates)}",
-            )
+            self._print_progress(0, total_work, started, detail=f"WP decision · candidate 0/{len(candidates)}")
 
         for candidate_index, action in enumerate(candidates, start=1):
             result = self._estimate_statistics_with_scenario_seeds(
@@ -127,14 +120,11 @@ class MonteCarloWinProbabilityEvaluator:
                     completed,
                     total_work,
                     started,
-                    len(candidates),
-                    simulation_count,
                     detail=f"WP decision · candidate {candidate_index}/{len(candidates)} complete",
                 )
 
         if self._show_progress:
-            sys.stdout.write("\n")
-            sys.stdout.flush()
+            self._finish_progress_line()
         return results
 
     def _scenario_seeds(self, simulation_count: int) -> tuple[int, ...]:
@@ -191,8 +181,6 @@ class MonteCarloWinProbabilityEvaluator:
                     completed,
                     progress_total,
                     progress_started,
-                    None,
-                    None,
                     detail=f"{progress_label} · sim {simulation_index}/{simulation_count}",
                 )
 
@@ -207,8 +195,6 @@ class MonteCarloWinProbabilityEvaluator:
         completed: int,
         total: int,
         started: float,
-        candidates: int | None,
-        simulations: int | None,
         *,
         detail: str | None = None,
     ) -> None:
@@ -219,12 +205,25 @@ class MonteCarloWinProbabilityEvaluator:
         width = 32
         filled = int(width * fraction)
         bar = "#" * filled + "." * (width - filled)
-        eta = self._format_duration(remaining)
-        elapsed_text = self._format_duration(elapsed)
-        percent = fraction * 100
-        suffix = f" | {detail}" if detail else ""
-        text = f"\rWP decision [{bar}] {percent:5.1f}% | {elapsed_text} elapsed | ETA {eta} | {rate:5.1f}/s{suffix}"
-        sys.stdout.write(text[:220].ljust(220))
+        text = (
+            f"WP decision [{bar}] {fraction * 100:5.1f}% | "
+            f"{self._format_duration(elapsed)} elapsed | "
+            f"ETA {self._format_duration(remaining)} | {rate:5.1f}/s"
+        )
+        if detail:
+            text += f" | {detail}"
+        self._write_progress_line(text)
+
+    @staticmethod
+    def _write_progress_line(text: str) -> None:
+        # ANSI clear-line + carriage return prevents progress updates from
+        # accumulating when the terminal honors ANSI control sequences.
+        sys.stdout.write("\x1b[2K\r" + text[:220])
+        sys.stdout.flush()
+
+    @staticmethod
+    def _finish_progress_line() -> None:
+        sys.stdout.write("\x1b[2K\r")
         sys.stdout.flush()
 
     @staticmethod
