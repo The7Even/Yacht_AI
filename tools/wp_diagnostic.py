@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
+
+# Running this file directly (python tools/wp_diagnostic.py) puts `tools/`
+# on sys.path, not the project root. Add the root so `app` can be imported.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.ai.win_probability_diagnostic import WinProbabilityDiagnostic
 from app.ai.win_probability_strategy import WinProbabilityStrategy
