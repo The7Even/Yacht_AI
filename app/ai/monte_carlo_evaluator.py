@@ -22,7 +22,14 @@ class ActionStatistics:
 
 
 class MonteCarloWinProbabilityEvaluator:
-    """Estimates final win probability without mutating the supplied game state."""
+    """Estimates final win probability without mutating the supplied game state.
+
+    The strong continuation policy is intentionally used only for a bounded
+    number of future turns. After that horizon the simulation falls back to a
+    cheap RuleBased policy. This keeps Monte Carlo useful as a strategic
+    look-ahead without recursively paying the full FastEV cost for an entire
+    simulated game.
+    """
 
     def __init__(
         self,
@@ -30,9 +37,14 @@ class MonteCarloWinProbabilityEvaluator:
         player_strategy: Strategy | None = None,
         opponent_strategy: Strategy | None = None,
         seed: int | None = None,
+        strong_continuation_turns: int = 4,
     ) -> None:
+        if strong_continuation_turns < 0:
+            raise ValueError("strong_continuation_turns must be non-negative.")
         self._player_strategy = player_strategy or RuleBasedStrategy()
         self._opponent_strategy = opponent_strategy or RuleBasedStrategy()
+        self._fallback_strategy = RuleBasedStrategy()
+        self._strong_continuation_turns = strong_continuation_turns
         self._seed = seed
 
     def estimate_win_probability(
@@ -57,7 +69,7 @@ class MonteCarloWinProbabilityEvaluator:
             engine = GameEngine(DiceRoller(rng))
             engine.state = deepcopy(game_state)
             self._apply_candidate_action(engine, action)
-            self._finish_game(engine, players)
+            self._finish_game(engine, players, player_id)
             total += self._final_result(engine.state, player_id)
         return total / simulation_count
 
@@ -130,7 +142,7 @@ class MonteCarloWinProbabilityEvaluator:
             engine = GameEngine(DiceRoller(random.Random(seed)))
             engine.state = deepcopy(game_state)
             self._apply_candidate_action(engine, action)
-            self._finish_game(engine, players)
+            self._finish_game(engine, players, player_id)
             wins += self._final_result(engine.state, player_id)
             total_score += engine.state.players[player_id].total_score
             total_opponent_score += engine.state.players[opponent_id].total_score
@@ -170,10 +182,26 @@ class MonteCarloWinProbabilityEvaluator:
         for index in desired - engine.state.held_indices:
             engine.hold_dice(index)
 
-    def _finish_game(self, engine: GameEngine, players: dict[PlayerId, AIPlayer]) -> None:
+    def _finish_game(
+        self,
+        engine: GameEngine,
+        players: dict[PlayerId, AIPlayer],
+        perspective: PlayerId,
+    ) -> None:
+        strong_turns_remaining = self._strong_continuation_turns
         while not engine.is_game_over():
             active_player = engine.state.current_player
-            self._finish_turn(engine, players[active_player])
+            player = players[active_player]
+
+            # Only the evaluated player's expensive continuation is bounded.
+            # The opponent already uses the cheap strategy supplied by the
+            # evaluator, so there is no reason to weaken it further.
+            if active_player is perspective and strong_turns_remaining <= 0:
+                player = AIPlayer(self._fallback_strategy)
+
+            self._finish_turn(engine, player)
+            if active_player is perspective and strong_turns_remaining > 0:
+                strong_turns_remaining -= 1
             if not engine.is_game_over():
                 engine.end_turn()
 
