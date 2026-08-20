@@ -51,6 +51,7 @@ def strategy_specs(
                     lambda: WinProbabilityStrategy(
                         simulation_count=win_probability_simulations,
                         max_candidates=win_probability_candidates,
+                        show_progress=False,
                     ),
                 ),
             ),
@@ -67,6 +68,7 @@ def strategy_specs(
                 lambda: WinProbabilityStrategy(
                     simulation_count=win_probability_simulations,
                     max_candidates=win_probability_candidates,
+                    show_progress=False,
                 ),
             ),
         ),
@@ -92,7 +94,7 @@ def _format_duration(seconds: float) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def _progress_line(completed: int, total: int, started: float, matchup: str, game: int, games: int) -> None:
+def _progress_line(completed: int, total: int, started: float, matchup: str, game: int, games: int, turn: int) -> None:
     elapsed = time.perf_counter() - started
     fraction = completed / total if total else 1.0
     rate = completed / elapsed if elapsed > 0 else 0.0
@@ -100,12 +102,13 @@ def _progress_line(completed: int, total: int, started: float, matchup: str, gam
     width = 36
     filled = int(width * fraction)
     bar = "#" * filled + "." * (width - filled)
+    turn_text = "complete" if turn == 0 else f"turn {turn}/12"
     text = (
         f"Overall [{bar}] {fraction * 100:5.1f}% | "
         f"{completed}/{total} games | "
         f"Elapsed {_format_duration(elapsed)} | "
         f"ETA {_format_duration(remaining)}\n"
-        f"Current: {matchup} | game {game}/{games}"
+        f"Current: {matchup} | game {game}/{games} | {turn_text}"
     )
     sys.stdout.write("\x1b[2K\x1b[1A\x1b[2K\r" + text + "\n")
     sys.stdout.flush()
@@ -151,8 +154,8 @@ def main() -> None:
                 print("", flush=True)
                 progress_started = True
 
-            def on_progress(done: int, total: int, one: str, two: str, game: int) -> None:
-                _progress_line(done, total, started, f"{one} vs {two}", game, args.games)
+            def on_progress(done: int, total: int, one: str, two: str, game: int, games: int, turn: int) -> None:
+                _progress_line(done, total, started, f"{one} vs {two}", game, games, turn)
 
             result = benchmark.run(
                 factory_one,
