@@ -107,10 +107,12 @@ def _progress_line(completed: int, total: int, started: float, matchup: str, gam
         f"Overall [{bar}] {fraction * 100:5.1f}% | "
         f"{completed}/{total} games | "
         f"Elapsed {_format_duration(elapsed)} | "
-        f"ETA {_format_duration(remaining)}\n"
+        f"ETA {_format_duration(remaining)} | "
         f"Current: {matchup} | game {game}/{games} | {turn_text}"
     )
-    sys.stdout.write("\x1b[2K\x1b[1A\x1b[2K\r" + text + "\n")
+    # Keep exactly one live progress line.  Do not move the cursor vertically,
+    # because repeated callbacks happen many times during a single game.
+    sys.stdout.write("\r\x1b[2K" + text)
     sys.stdout.flush()
 
 
@@ -168,11 +170,10 @@ def main() -> None:
             )
             completed += args.games
             results.append(result)
-            print(f"    {result.player_one_wins:>3} - {result.player_two_wins:<3} ({result.draws} draw), {result.player_one_win_rate:.1%} / {result.player_two_win_rate:.1%}", flush=True)
+            print(f"\n    {result.player_one_wins:>3} - {result.player_two_wins:<3} ({result.draws} draw), {result.player_one_win_rate:.1%} / {result.player_two_win_rate:.1%}", flush=True)
 
     if progress_started:
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+        print(flush=True)
 
     report = BenchmarkReport.from_results(results)
     print()
