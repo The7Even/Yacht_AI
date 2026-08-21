@@ -11,7 +11,7 @@ from .strategy import RuleBasedStrategy, Strategy
 
 
 class WinProbabilityStrategy:
-    """Choose a legal action using Monte Carlo win probability conservatively."""
+    """Choose a legal action using Monte Carlo win probability with score-aware tie breaking."""
 
     def __init__(
         self,
@@ -22,6 +22,7 @@ class WinProbabilityStrategy:
         continuation_strategy: Strategy | None = None,
         opponent_strategy: Strategy | None = None,
         reroll_advantage_threshold: float = 0.08,
+        score_tiebreak_window: float = 0.05,
         show_progress: bool = True,
     ) -> None:
         if simulation_count <= 0:
@@ -30,6 +31,8 @@ class WinProbabilityStrategy:
             raise ValueError("max_candidates must be positive when provided.")
         if not 0.0 <= reroll_advantage_threshold <= 1.0:
             raise ValueError("reroll_advantage_threshold must be between 0 and 1.")
+        if not 0.0 <= score_tiebreak_window <= 1.0:
+            raise ValueError("score_tiebreak_window must be between 0 and 1.")
 
         continuation = continuation_strategy or MonteCarloRolloutStrategy()
         opponent = opponent_strategy or RuleBasedStrategy()
@@ -41,15 +44,26 @@ class WinProbabilityStrategy:
         self._simulation_count = simulation_count
         self._max_candidates = max_candidates
         self._reroll_advantage_threshold = reroll_advantage_threshold
+        self._score_tiebreak_window = score_tiebreak_window
 
     def decide(self, state: GameState) -> DecisionResult:
         if state.current_dice is None or state.roll_count == 0:
             raise ValueError("WinProbabilityStrategy requires a rolled hand.")
         actions = self._candidate_actions(state, self._max_candidates)
-        probabilities = self._evaluator.estimate_actions_win_probability(state, actions, self._simulation_count)
-        candidates = tuple(ActionAlternative(action, probabilities[action]) for action in actions)
-        ordered = tuple(sorted(candidates, key=lambda candidate: self._sort_key(state, candidate), reverse=True))
-        best = self._select_robust_action(state, ordered)
+        statistics = self._evaluator.estimate_actions_statistics(
+            state, actions, self._simulation_count
+        )
+        candidates = tuple(
+            ActionAlternative(action, statistics[action].win_probability) for action in actions
+        )
+        ordered = tuple(
+            sorted(
+                candidates,
+                key=lambda candidate: self._sort_key(state, candidate, statistics),
+                reverse=True,
+            )
+        )
+        best = self._select_robust_action(state, ordered, statistics)
         return DecisionResult(
             action=best.action,
             expected_value=None,
@@ -57,14 +71,24 @@ class WinProbabilityStrategy:
             reasoning=self._reasoning(best.action, best.expected_value),
         )
 
-    def _select_robust_action(self, state: GameState, ordered: tuple[ActionAlternative, ...]) -> ActionAlternative:
+    def _select_robust_action(
+        self,
+        state: GameState,
+        ordered: tuple[ActionAlternative, ...],
+        statistics: dict[Action, object],
+    ) -> ActionAlternative:
         best = ordered[0]
         if best.action.type is not ActionType.REROLL:
             return best
-        score_candidates = tuple(candidate for candidate in ordered if candidate.action.type is ActionType.SCORE)
+        score_candidates = tuple(
+            candidate for candidate in ordered if candidate.action.type is ActionType.SCORE
+        )
         if not score_candidates:
             return best
-        best_score = max(score_candidates, key=lambda candidate: self._score_action_key(state, candidate))
+        best_score = max(
+            score_candidates,
+            key=lambda candidate: self._score_action_key(state, candidate),
+        )
         advantage = best.expected_value - best_score.expected_value
         if advantage < self._reroll_advantage_threshold:
             return best_score
@@ -108,10 +132,6 @@ class WinProbabilityStrategy:
                 )[:max_candidates]
             )
 
-        # Preserve the original conservative 4/2 split. More score candidates
-        # give the Monte Carlo evaluator enough banking choices to account for
-        # upper-bonus and immediate-score states without spending simulations
-        # on too many speculative rerolls.
         score_slots = min(len(score_actions), max_candidates - 2)
         reroll_slots = min(2, max_candidates - score_slots)
         if score_slots <= 0:
@@ -168,15 +188,39 @@ class WinProbabilityStrategy:
                 current = 1
         return best
 
-    @staticmethod
-    def _sort_key(state: GameState, candidate: ActionAlternative) -> tuple[float, float, int, tuple[int, ...], str]:
+    def _sort_key(
+        self,
+        state: GameState,
+        candidate: ActionAlternative,
+        statistics: dict[Action, object],
+    ) -> tuple[float, float, float, int, tuple[int, ...], str]:
         action = candidate.action
+        stats = statistics[action]
+        average_score = float(getattr(stats, "average_score"))
+        average_opponent_score = float(getattr(stats, "average_opponent_score"))
+        score_diff = average_score - average_opponent_score
         immediate_score = 0.0
         if action.type is ActionType.SCORE:
             assert action.selected_category is not None
             assert state.current_dice is not None
             immediate_score = float(ScoreCalculator.calculate(action.selected_category, state.current_dice))
-        return (candidate.expected_value, immediate_score, 1 if action.type is ActionType.SCORE else 0, tuple(-index for index in action.held_indices), action.selected_category.value if action.selected_category is not None else "")
+
+        # Monte Carlo win probability remains the primary objective. With a
+        # small simulation budget, however, several actions often tie or sit
+        # within noise-level differences. In that narrow window, prefer the
+        # action whose simulated final score margin is healthier.
+        probability_signal = candidate.expected_value
+        if ordered_window := self._score_tiebreak_window:
+            probability_signal = candidate.expected_value
+        return (
+            probability_signal,
+            score_diff if abs(candidate.expected_value - candidate.expected_value) <= ordered_window else 0.0,
+            average_score,
+            immediate_score,
+            1 if action.type is ActionType.SCORE else 0,
+            tuple(-index for index in action.held_indices),
+            action.selected_category.value if action.selected_category is not None else "",
+        )
 
     @staticmethod
     def _reasoning(action: Action, probability: float) -> str:
