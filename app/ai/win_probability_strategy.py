@@ -4,6 +4,7 @@ from app.core.game_state import GameState
 from app.core.scoring import ScoreCalculator
 
 from .action_generator import Action, ActionAlternative, ActionGenerator, ActionType, DecisionResult
+from .matchup_monte_carlo_evaluator import MatchupAwareMonteCarloWinProbabilityEvaluator
 from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
 from .monte_carlo_rollout_strategy import MonteCarloRolloutStrategy
 from .strategy import RuleBasedStrategy, Strategy
@@ -32,7 +33,7 @@ class WinProbabilityStrategy:
 
         continuation = continuation_strategy or MonteCarloRolloutStrategy()
         opponent = opponent_strategy or RuleBasedStrategy()
-        self._evaluator = evaluator or MonteCarloWinProbabilityEvaluator(
+        self._evaluator = evaluator or MatchupAwareMonteCarloWinProbabilityEvaluator(
             player_strategy=continuation,
             opponent_strategy=opponent,
             show_progress=show_progress,
