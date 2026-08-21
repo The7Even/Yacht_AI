@@ -1,2 +1,3 @@
-# Runtime GUI dependencies will be added when the UI phase begins.
+# Runtime GUI dependency
+PySide6>=6.8,<7
 pytest>=8.0
