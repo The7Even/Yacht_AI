@@ -401,8 +401,8 @@ class YachtWindow(QMainWindow):
             if category in self.category_icons:
                 button.setIcon(self.category_icons[category])
                 button.setIconSize(QSize(88, 42))
-            elif category in self.dice_icons:
-                button.setIcon(self.dice_icons[category])
+            elif category.is_upper and category.upper_face in self.dice_icons:
+                button.setIcon(self.dice_icons[category.upper_face])
                 button.setIconSize(QSize(34, 34))
             button.setText(f"{CATEGORY_SHORT[category]}\n사용 가능 점수: -")
             button.clicked.connect(lambda _=False, cat=category: self.score_category(cat))
