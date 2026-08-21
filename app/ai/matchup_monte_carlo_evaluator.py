@@ -4,7 +4,6 @@ from app.core.game_engine import GameEngine
 from app.core.game_state import GameState, PlayerId
 
 from .ai_player import AIPlayer
-from .action_generator import ActionType
 from .monte_carlo_evaluator import MonteCarloWinProbabilityEvaluator
 
 
@@ -12,12 +11,14 @@ class MatchupAwareMonteCarloWinProbabilityEvaluator(MonteCarloWinProbabilityEval
     """Use the supplied opponent strategy throughout the simulated game.
 
     The base evaluator intentionally falls back to RuleBasedStrategy after the
-    perspective player's bounded strong continuation.  That fallback is useful
+    perspective player's bounded strong continuation. That fallback is useful
     for keeping rollouts cheap, but it also accidentally replaced the opponent
-    strategy.  This subclass keeps that bounded fallback for our own future
+    strategy. This subclass keeps that bounded fallback for our own future
     turns while allowing the opponent model to remain the actual matchup
     strategy for the whole simulated game.
     """
+
+    _OPPONENT_DECISION_BUDGET = 1_000_000
 
     def _finish_game(
         self,
@@ -35,13 +36,17 @@ class MatchupAwareMonteCarloWinProbabilityEvaluator(MonteCarloWinProbabilityEval
         while not engine.is_game_over():
             active_player = engine.state.current_player
             player = players[active_player]
-            strong_decisions_remaining = 0
 
             if active_player is perspective:
                 if strong_turns_remaining > 0:
                     strong_decisions_remaining = self._strong_decisions_per_turn
                 else:
                     player = AIPlayer(self._fallback_strategy)
+                    strong_decisions_remaining = 0
+            else:
+                # The opponent must use the actual matchup strategy, not the
+                # RuleBased fallback used for our own cheap continuation.
+                strong_decisions_remaining = self._OPPONENT_DECISION_BUDGET
 
             turn_decisions, turn_elapsed = self._finish_turn(
                 engine,
