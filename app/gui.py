@@ -23,6 +23,7 @@ QLabel#muted { color: #9aaac0; font-size: 12px; }
 QLabel#score { font-size: 27px; font-weight: 800; }
 QLabel#section { font-size: 15px; font-weight: 800; }
 QLabel#subsection { font-size: 11px; font-weight: 800; color: #b7c6d9; padding-top: 1px; }
+QLabel#scorecardTitle { font-size: 14px; font-weight: 800; color: #e8edf7; padding: 0 2px; }
 QLabel#scoreGap { font-size: 14px; font-weight: 700; color: #8fbfff; }
 QLabel#scoreGapNegative { font-size: 14px; font-weight: 700; color: #ff9aaa; }
 QLabel#playerHeader, QLabel#playerScore { color: #64a9ff; }
@@ -171,6 +172,9 @@ class YachtWindow(QMainWindow):
     def _build_scorecard(self):
         card = QFrame(); card.setObjectName("card")
         layout = QVBoxLayout(card); layout.setContentsMargins(7, 5, 7, 6); layout.setSpacing(4)
+        title = QLabel("점수판")
+        title.setObjectName("scorecardTitle")
+        layout.addWidget(title)
         header = QGridLayout(); header.setContentsMargins(3, 0, 3, 0); header.setHorizontalSpacing(4)
         header.addWidget(QLabel("카테고리"), 0, 0)
         ph = QLabel("PLAYER"); ph.setObjectName("playerHeader"); ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
