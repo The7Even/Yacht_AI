@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import Iterable
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -29,33 +30,31 @@ QFrame#playerCard { background: #122846; border: 1px solid #2367b7; border-radiu
 QFrame#aiCard { background: #281923; border: 1px solid #8d3342; border-radius: 12px; }
 QLabel { background: transparent; border: none; }
 QLabel#title { font-size: 34px; font-weight: 800; color: #f4f7fb; }
-QLabel#muted { color: #8797ad; }
-QLabel#score { font-size: 25px; font-weight: 700; }
-QLabel#section { font-size: 16px; font-weight: 700; }
-QLabel#subsection { font-size: 13px; font-weight: 700; color: #aebed2; padding-top: 4px; }
-QLabel#scoreGap { font-size: 15px; font-weight: 700; color: #8fbfff; }
-QLabel#scoreGapNegative { font-size: 15px; font-weight: 700; color: #ff9aaa; }
-QLabel#scoreHeader { color: #93a5bd; font-size: 11px; font-weight: 700; }
-QLabel#scoreValue { font-size: 13px; font-weight: 700; }
-QLabel#bonus { color: #c7d4e5; font-size: 11px; }
-QPushButton { background: #1a2a41; border: 1px solid #314966; border-radius: 8px; padding: 9px 12px; color: #e8edf7; }
+QLabel#muted { color: #9aaac0; font-size: 12px; }
+QLabel#score { font-size: 27px; font-weight: 800; }
+QLabel#section { font-size: 15px; font-weight: 800; }
+QLabel#subsection { font-size: 12px; font-weight: 800; color: #b7c6d9; padding-top: 2px; }
+QLabel#scoreGap { font-size: 14px; font-weight: 700; color: #8fbfff; }
+QLabel#scoreGapNegative { font-size: 14px; font-weight: 700; color: #ff9aaa; }
+QLabel#scoreHeader { color: #a8b8cd; font-size: 12px; font-weight: 800; }
+QLabel#scoreValue { font-size: 15px; font-weight: 800; }
+QPushButton { background: #1a2a41; border: 1px solid #314966; border-radius: 8px; padding: 9px 12px; color: #e8edf7; font-size: 12px; }
 QPushButton:hover { background: #223957; }
 QPushButton:disabled { color: #65758b; background: #162234; border-color: #243247; }
-QPushButton#roll { background: #245eb1; border-color: #3476d6; font-size: 16px; font-weight: 700; padding: 13px; }
+QPushButton#roll { background: #245eb1; border-color: #3476d6; font-size: 16px; font-weight: 800; padding: 13px; }
 QPushButton#roll:hover { background: #2c6dca; }
 QPushButton#newGame { background: #1b304b; }
-QPushButton#category { min-height: 44px; text-align: left; padding: 7px 10px; }
+QPushButton#category { min-height: 44px; text-align: left; padding: 7px 10px; font-size: 12px; }
 QPushButton#category[available="true"] { background: #172a43; border-color: #365a80; }
 QPushButton#category[available="true"]:hover { background: #203c5d; border-color: #5c8ec5; }
-QPushButton#die { background: #f3f5f8; color: #172033; border: 3px solid #56657a; border-radius: 10px; font-size: 34px; font-weight: 800; min-width: 88px; min-height: 88px; }
+QPushButton#die { background: #f3f5f8; color: #172033; border: 3px solid #56657a; border-radius: 12px; min-width: 100px; min-height: 100px; padding: 5px; }
 QPushButton#die:hover { border-color: #8da1ba; }
 QPushButton#die[held="true"] { border: 4px solid #2e8cff; background: #e9f2ff; }
 QLabel#status { background: #0e1929; border: 1px solid #20324b; border-radius: 8px; padding: 10px; color: #b8c5d7; }
-QLabel#log { color: #aab8ca; }
+QLabel#log { color: #b5c2d3; font-size: 12px; }
 QFrame#scoreRow { background: #0e1929; border: 1px solid #1f3048; border-radius: 6px; }
 """
 
-DIE_GLYPHS = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
 CATEGORY_SHORT = {
     Category.ONES: "Ones",
     Category.TWOS: "Twos",
@@ -97,18 +96,27 @@ class YachtWindow(QMainWindow):
         self.roll_button = None
         self.player_upper_label = None
         self.ai_upper_label = None
-        self.player_bonus_label = None
-        self.ai_bonus_label = None
         self.center_total_label = None
         self.gap_label = None
+        self.dice_icons = self._load_dice_icons()
         self._build_ui()
         self.start_new_game()
+
+    def _load_dice_icons(self):
+        icons = {}
+        asset_dir = Path(__file__).resolve().parent / "assets" / "dice"
+        for value in range(1, 7):
+            path = asset_dir / f"dice_{value}.svg"
+            if path.exists():
+                icons[value] = QIcon(str(path))
+        return icons
 
     def _build_ui(self):
         self.setWindowTitle("Yacht Game Prototype")
         self.resize(1360, 900)
         self.setMinimumSize(1100, 760)
         self.setStyleSheet(APP_STYLE)
+
         root = QWidget()
         self.setCentralWidget(root)
         main = QVBoxLayout(root)
@@ -121,9 +129,11 @@ class YachtWindow(QMainWindow):
         new_game.clicked.connect(self.start_new_game)
         header.addWidget(new_game)
         header.addStretch()
+
         title = QLabel("⚓  YACHT  ⚓")
         title.setObjectName("title")
         header.addWidget(title)
+
         header.addStretch()
         rules = QPushButton("⚙  규칙")
         rules.clicked.connect(self.show_rules)
@@ -145,7 +155,7 @@ class YachtWindow(QMainWindow):
         main.addLayout(body, 1)
 
         footer = QHBoxLayout()
-        footer.addWidget(QLabel("Yacht Game Prototype v0.2"))
+        footer.addWidget(QLabel("Yacht Game Prototype v0.3"))
         tip = QLabel("💡 주사위를 클릭하면 HOLD할 수 있습니다.")
         tip.setObjectName("muted")
         footer.addStretch()
@@ -159,19 +169,22 @@ class YachtWindow(QMainWindow):
         frame.setObjectName("playerCard" if side == "player" else "aiCard")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(14, 10, 14, 10)
+
         icon = QLabel("👤" if side == "player" else "🤖")
         name_label = QLabel(name)
         name_label.setStyleSheet(
-            "font-size:18px;font-weight:800;color:#64a9ff;"
+            "font-size:18px;font-weight:800;color:#64a9ff;background:transparent;"
             if side == "player"
-            else "font-size:18px;font-weight:800;color:#ff7f91;"
+            else "font-size:18px;font-weight:800;color:#ff7f91;background:transparent;"
         )
+
         total = QLabel("0")
         total.setObjectName("score")
         if side == "player":
             self.player_total = total
         else:
             self.ai_total = total
+
         layout.addWidget(icon)
         layout.addWidget(name_label)
         layout.addStretch()
@@ -184,17 +197,21 @@ class YachtWindow(QMainWindow):
         frame.setObjectName("card")
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(14, 7, 14, 7)
+
         caption = QLabel("현재 경기")
         caption.setObjectName("muted")
         caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(caption)
+
         self.center_total_label = QLabel("0 : 0")
         self.center_total_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.center_total_label.setStyleSheet("font-size:20px;font-weight:800;")
         layout.addWidget(self.center_total_label)
-        self.gap_label = QLabel("점수 차이 0점")
+
+        self.gap_label = QLabel("점수 차이 0점 · 동점")
         self.gap_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.gap_label)
+
         self.turn_label = QLabel("턴 1 / 12")
         self.turn_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.turn_label.setObjectName("muted")
@@ -205,13 +222,16 @@ class YachtWindow(QMainWindow):
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(10, 7, 10, 8)
+
         title = QLabel("점수판")
-        title.setObjectName("section")
+        title.setObjectName("subsection")
         layout.addWidget(title)
+
         header = QGridLayout()
         header.setContentsMargins(4, 0, 4, 0)
         header.addWidget(QLabel("카테고리"), 0, 0)
+
         player_header = QLabel("PLAYER")
         player_header.setObjectName("scoreHeader")
         ai_header = QLabel("AI")
@@ -219,45 +239,76 @@ class YachtWindow(QMainWindow):
         header.addWidget(player_header, 0, 1, Qt.AlignmentFlag.AlignCenter)
         header.addWidget(ai_header, 0, 2, Qt.AlignmentFlag.AlignCenter)
         layout.addLayout(header)
+
         layout.addWidget(self._score_section("기본 점수", UPPER_CATEGORIES))
 
-        bonus = QFrame()
-        bonus.setObjectName("scoreRow")
-        bonus_layout = QGridLayout(bonus)
-        bonus_layout.setContentsMargins(8, 5, 8, 5)
-        bonus_layout.addWidget(QLabel("상단 합계"), 0, 0)
+        upper_summary = QFrame()
+        upper_summary.setObjectName("scoreRow")
+        summary_layout = QGridLayout(upper_summary)
+        summary_layout.setContentsMargins(8, 5, 8, 5)
+        summary_layout.addWidget(QLabel("상단 합계"), 0, 0)
+
         self.player_upper_label = QLabel("0 / 63")
         self.ai_upper_label = QLabel("0 / 63")
-        bonus_layout.addWidget(self.player_upper_label, 0, 1, Qt.AlignmentFlag.AlignCenter)
-        bonus_layout.addWidget(self.ai_upper_label, 0, 2, Qt.AlignmentFlag.AlignCenter)
-        bonus_layout.addWidget(QLabel("보너스"), 1, 0)
-        self.player_bonus_label = QLabel("보너스까지 63점 남음")
-        self.ai_bonus_label = QLabel("보너스까지 63점 남음")
-        bonus_layout.addWidget(self.player_bonus_label, 1, 1)
-        bonus_layout.addWidget(self.ai_bonus_label, 1, 2)
-        layout.addWidget(bonus)
+        self.player_upper_label.setObjectName("scoreValue")
+        self.ai_upper_label.setObjectName("scoreValue")
+        summary_layout.addWidget(self.player_upper_label, 0, 1, Qt.AlignmentFlag.AlignCenter)
+        summary_layout.addWidget(self.ai_upper_label, 0, 2, Qt.AlignmentFlag.AlignCenter)
+
+        summary_layout.addWidget(QLabel("보너스"), 1, 0)
+        player_bonus = QLabel("-")
+        ai_bonus = QLabel("-")
+        player_bonus.setObjectName("scoreValue")
+        ai_bonus.setObjectName("scoreValue")
+        self.player_bonus_summary = player_bonus
+        self.ai_bonus_summary = ai_bonus
+        summary_layout.addWidget(player_bonus, 1, 1, Qt.AlignmentFlag.AlignCenter)
+        summary_layout.addWidget(ai_bonus, 1, 2, Qt.AlignmentFlag.AlignCenter)
+
+        layout.addWidget(upper_summary)
         layout.addWidget(self._score_section("특수 족보", SPECIAL_CATEGORIES))
+
+        total_row = QFrame()
+        total_row.setObjectName("scoreRow")
+        total_layout = QGridLayout(total_row)
+        total_layout.setContentsMargins(8, 5, 8, 5)
+        total_layout.addWidget(QLabel("총합"), 0, 0)
+
+        self.player_table_total = QLabel("0")
+        self.ai_table_total = QLabel("0")
+        self.player_table_total.setObjectName("scoreValue")
+        self.ai_table_total.setObjectName("scoreValue")
+        total_layout.addWidget(self.player_table_total, 0, 1, Qt.AlignmentFlag.AlignCenter)
+        total_layout.addWidget(self.ai_table_total, 0, 2, Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(total_row)
+
         return card
 
     def _score_section(self, title, categories):
         wrap = QFrame()
         layout = QVBoxLayout(wrap)
         layout.setContentsMargins(0, 2, 0, 2)
+
         subsection = QLabel(title)
         subsection.setObjectName("subsection")
         layout.addWidget(subsection)
+
         grid = QGridLayout()
         grid.setHorizontalSpacing(4)
         grid.setVerticalSpacing(3)
+
         for row, category in enumerate(categories):
             name = QLabel(CATEGORY_SHORT[category])
+            name.setStyleSheet("font-size:13px;")
             grid.addWidget(name, row, 0)
+
             for column, player in ((1, PlayerId.PLAYER), (2, PlayerId.AI)):
                 value = QLabel("-")
                 value.setObjectName("scoreValue")
                 value.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.score_labels[player, category] = value
                 grid.addWidget(value, row, column)
+
         layout.addLayout(grid)
         return wrap
 
@@ -265,31 +316,38 @@ class YachtWindow(QMainWindow):
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 12, 14, 12)
-        caption = QLabel("주사위")
+        layout.setContentsMargins(14, 10, 14, 10)
+
+        caption = QLabel("주사위 굴리기")
         caption.setObjectName("section")
         layout.addWidget(caption)
+
         self.roll_label = QLabel("0 / 3 · 3회 남음")
         self.roll_label.setObjectName("muted")
         layout.addWidget(self.roll_label)
+
         dice = QHBoxLayout()
-        dice.setSpacing(8)
+        dice.setSpacing(10)
         for index in range(5):
             button = QPushButton("-")
             button.setObjectName("die")
             button.setProperty("held", False)
+            button.setIconSize(QSize(84, 84))
             button.clicked.connect(lambda _=False, idx=index: self.toggle_hold(idx))
             dice.addWidget(button, 1)
             self.die_buttons.append(button)
         layout.addLayout(dice)
+
         self.status_label = QLabel("새 게임을 시작했습니다.")
         self.status_label.setObjectName("status")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.status_label)
+
         self.roll_button = QPushButton("🎲  주사위 굴리기")
         self.roll_button.setObjectName("roll")
         self.roll_button.clicked.connect(self.roll_dice)
         layout.addWidget(self.roll_button)
+
         title = QLabel("카테고리 선택")
         title.setObjectName("section")
         layout.addWidget(title)
@@ -301,9 +359,11 @@ class YachtWindow(QMainWindow):
         wrap = QFrame()
         layout = QVBoxLayout(wrap)
         layout.setContentsMargins(0, 0, 0, 0)
+
         subsection = QLabel(title)
         subsection.setObjectName("subsection")
         layout.addWidget(subsection)
+
         grid = QGridLayout()
         grid.setSpacing(5)
         for index, category in enumerate(categories):
@@ -313,6 +373,7 @@ class YachtWindow(QMainWindow):
             button.clicked.connect(lambda _=False, cat=category: self.score_category(cat))
             self.category_buttons[category] = button
             grid.addWidget(button, index // 3, index % 3)
+
         layout.addLayout(grid)
         return wrap
 
@@ -320,9 +381,11 @@ class YachtWindow(QMainWindow):
         outer = QFrame()
         outer.setObjectName("card")
         layout = QVBoxLayout(outer)
+
         title = QLabel("AI 진행 상황")
         title.setObjectName("section")
         layout.addWidget(title)
+
         ai_status = QLabel(
             "AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\n"
             "현재는 PLAYER 프로토타입 단계입니다."
@@ -330,9 +393,11 @@ class YachtWindow(QMainWindow):
         ai_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ai_status.setObjectName("status")
         layout.addWidget(ai_status, 1)
+
         log_title = QLabel("게임 로그")
         log_title.setObjectName("section")
         layout.addWidget(log_title)
+
         self.log_label = QLabel("게임이 시작되었습니다.\nPLAYER 턴입니다.")
         self.log_label.setObjectName("log")
         self.log_label.setWordWrap(True)
@@ -350,6 +415,7 @@ class YachtWindow(QMainWindow):
         except (RuntimeError, ValueError) as exc:
             self._set_status(str(exc))
             return
+
         remaining = max(0, MAX_ROLLS_PER_TURN - self.engine.state.roll_count)
         self._set_status(
             f"{self.engine.state.roll_count}/{MAX_ROLLS_PER_TURN}회 굴렸습니다. "
@@ -360,6 +426,7 @@ class YachtWindow(QMainWindow):
     def toggle_hold(self, index):
         if self.engine.state.current_dice is None:
             return
+
         try:
             if index in self.engine.state.held_indices:
                 self.engine.unhold_dice(index)
@@ -368,6 +435,7 @@ class YachtWindow(QMainWindow):
         except (RuntimeError, ValueError) as exc:
             self._set_status(str(exc))
             return
+
         self._refresh()
         action = "HOLD" if index in self.engine.state.held_indices else "UNHOLD"
         self._set_status(f"주사위 {index + 1}번을 {action}했습니다.")
@@ -378,6 +446,7 @@ class YachtWindow(QMainWindow):
         except (RuntimeError, ValueError) as exc:
             self._set_status(str(exc))
             return
+
         if self.engine.is_game_over():
             self._refresh()
             QMessageBox.information(
@@ -386,6 +455,7 @@ class YachtWindow(QMainWindow):
                 f"게임이 종료되었습니다.\nPLAYER {self.engine.state.player_score}점",
             )
             return
+
         self._set_status(
             f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. "
             "AI 턴은 다음 단계에서 연결합니다."
@@ -396,9 +466,17 @@ class YachtWindow(QMainWindow):
     def _refresh(self, dice: Iterable[int] | None = None):
         state = self.engine.state
         dice = tuple(dice) if dice is not None else state.current_dice
+
         for index, button in enumerate(self.die_buttons):
             value = dice[index] if dice and index < len(dice) else None
-            button.setText(DIE_GLYPHS.get(value, "-") if value else "-")
+            if value and value in self.dice_icons:
+                button.setIcon(self.dice_icons[value])
+                button.setIconSize(QSize(84, 84))
+                button.setText("")
+            else:
+                button.setIcon(QIcon())
+                button.setText("-")
+
             button.setProperty("held", index in state.held_indices)
             button.style().unpolish(button)
             button.style().polish(button)
@@ -420,6 +498,7 @@ class YachtWindow(QMainWindow):
 
         available = set(self.engine.get_available_categories()) if state.current_dice else set()
         scores = self.engine.get_current_scores() if state.current_dice else {}
+
         for category, button in self.category_buttons.items():
             is_available = category in available
             button.setProperty("available", is_available)
@@ -442,6 +521,7 @@ class YachtWindow(QMainWindow):
         self.player_total.setText(str(state.player_score))
         self.ai_total.setText(str(state.ai_score))
         self.center_total_label.setText(f"{state.player_score} : {state.ai_score}")
+
         diff = state.player_score - state.ai_score
         if diff > 0:
             gap_text = f"점수 차이 {diff}점 · PLAYER 우세"
@@ -452,6 +532,7 @@ class YachtWindow(QMainWindow):
         else:
             gap_text = "점수 차이 0점 · 동점"
             gap_object = "scoreGap"
+
         self.gap_label.setText(gap_text)
         self.gap_label.setObjectName(gap_object)
         self.gap_label.style().unpolish(self.gap_label)
@@ -459,16 +540,11 @@ class YachtWindow(QMainWindow):
 
         self.player_upper_label.setText(f"{state.player_upper_total} / 63")
         self.ai_upper_label.setText(f"{state.ai_upper_total} / 63")
-        self.player_bonus_label.setText(
-            "보너스 획득 · +35점"
-            if state.player_has_bonus
-            else f"보너스까지 {max(0, 63 - state.player_upper_total)}점 남음"
-        )
-        self.ai_bonus_label.setText(
-            "보너스 획득 · +35점"
-            if state.ai_has_bonus
-            else f"보너스까지 {max(0, 63 - state.ai_upper_total)}점 남음"
-        )
+        self.player_bonus_summary.setText("획득 (+35)" if state.player_has_bonus else "-")
+        self.ai_bonus_summary.setText("획득 (+35)" if state.ai_has_bonus else "-")
+        self.player_table_total.setText(str(state.player_score))
+        self.ai_table_total.setText(str(state.ai_score))
+
         round_no = min(12, (state.turn + 1) // 2)
         self.turn_label.setText(f"턴 {round_no} / 12")
 
