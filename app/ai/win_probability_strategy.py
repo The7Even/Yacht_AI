@@ -108,17 +108,12 @@ class WinProbabilityStrategy:
                 )[:max_candidates]
             )
 
-        # Keep the search balanced: a win-probability estimate needs both
-        # banking options and meaningful reroll branches. The old 4/2 split
-        # could discard too many promising rerolls before Monte Carlo ever saw
-        # them. For the benchmark's common six-candidate budget, use 3 + 3;
-        # for other budgets, split as evenly as possible while guaranteeing at
-        # least three reroll branches when enough candidates exist.
-        score_slots = min(len(score_actions), max_candidates // 2)
-        reroll_slots = max_candidates - score_slots
-        if len(reroll_actions) >= 3 and reroll_slots < 3:
-            reroll_slots = 3
-            score_slots = max_candidates - reroll_slots
+        # Preserve the original conservative 4/2 split. More score candidates
+        # give the Monte Carlo evaluator enough banking choices to account for
+        # upper-bonus and immediate-score states without spending simulations
+        # on too many speculative rerolls.
+        score_slots = min(len(score_actions), max_candidates - 2)
+        reroll_slots = min(2, max_candidates - score_slots)
         if score_slots <= 0:
             reroll_slots = min(max_candidates, len(reroll_actions))
             score_slots = max_candidates - reroll_slots
