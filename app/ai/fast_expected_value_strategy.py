@@ -24,7 +24,8 @@ class FastExpectedValueStrategy:
         if state.current_dice is None or state.roll_count == 0:
             raise ValueError("FastExpectedValueStrategy requires a rolled hand.")
 
-        dice = tuple(sorted(validate_dice(state.current_dice)))
+        # Keep physical dice order because held_indices refer to these positions.
+        dice = validate_dice(state.current_dice)
         available = tuple(
             category
             for category in ALL_CATEGORIES
@@ -85,25 +86,15 @@ class FastExpectedValueStrategy:
     @staticmethod
     @lru_cache(maxsize=200_000)
     def _score(category: Category, dice: tuple[int, ...]) -> int:
-        """Cache score calculations for canonical five-die hands.
-
-        Yacht scoring is independent of die position, so callers normalize dice
-        to sorted tuples before reaching this cache. Monte Carlo rollouts revisit
-        the same hands frequently across candidates and simulations.
-        """
-        return ScoreCalculator.calculate(category, dice)
+        """Cache score calculations for canonical five-die hands."""
+        return ScoreCalculator.calculate(category, tuple(sorted(dice)))
 
     @classmethod
     @lru_cache(maxsize=100_000)
     def _one_step_value(
         cls, dice: tuple[int, ...], held_values: tuple[int, ...], available: tuple[Category, ...]
     ) -> float:
-        """Compute one-step EV from dice values, ignoring physically irrelevant indices.
-
-        Dice positions do not affect Yacht scoring, so canonicalizing both the
-        hand and held values lets equivalent states reached through different
-        index choices share the same expensive expectation calculation.
-        """
+        """Compute one-step EV while reusing canonicalized hand calculations."""
         canonical_dice = tuple(sorted(dice))
         canonical_held = tuple(sorted(held_values))
         rerolled_count = DICE_COUNT - len(canonical_held)
