@@ -91,19 +91,48 @@ class WinProbabilityStrategy:
         score_actions = list(ActionGenerator.score_actions(state))
         reroll_actions: list[Action] = []
         if state.roll_count < 3:
-            reroll_actions = [action for action in ActionGenerator.reroll_actions(state.held_indices) if len(action.held_indices) < 5]
+            reroll_actions = [
+                action
+                for action in ActionGenerator.reroll_actions(state.held_indices)
+                if len(action.held_indices) < 5
+            ]
         actions = score_actions + reroll_actions
         if max_candidates is None or len(actions) <= max_candidates:
             return tuple(actions)
         if not reroll_actions:
-            return tuple(sorted(score_actions, key=lambda action: WinProbabilityStrategy._candidate_priority(state, action), reverse=True)[:max_candidates])
-        score_slots = min(len(score_actions), max(4, max_candidates // 2))
-        reroll_slots = min(len(reroll_actions), max_candidates - score_slots)
-        if reroll_slots < 4 and len(score_actions) >= 4:
-            reroll_slots = 4
+            return tuple(
+                sorted(
+                    score_actions,
+                    key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
+                    reverse=True,
+                )[:max_candidates]
+            )
+
+        # Keep the search balanced: a win-probability estimate needs both
+        # banking options and meaningful reroll branches. The old 4/2 split
+        # could discard too many promising rerolls before Monte Carlo ever saw
+        # them. For the benchmark's common six-candidate budget, use 3 + 3;
+        # for other budgets, split as evenly as possible while guaranteeing at
+        # least three reroll branches when enough candidates exist.
+        score_slots = min(len(score_actions), max_candidates // 2)
+        reroll_slots = max_candidates - score_slots
+        if len(reroll_actions) >= 3 and reroll_slots < 3:
+            reroll_slots = 3
             score_slots = max_candidates - reroll_slots
-        ranked_scores = sorted(score_actions, key=lambda action: WinProbabilityStrategy._candidate_priority(state, action), reverse=True)[:score_slots]
-        ranked_rerolls = sorted(reroll_actions, key=lambda action: WinProbabilityStrategy._candidate_priority(state, action), reverse=True)[:reroll_slots]
+        if score_slots <= 0:
+            reroll_slots = min(max_candidates, len(reroll_actions))
+            score_slots = max_candidates - reroll_slots
+
+        ranked_scores = sorted(
+            score_actions,
+            key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
+            reverse=True,
+        )[:score_slots]
+        ranked_rerolls = sorted(
+            reroll_actions,
+            key=lambda action: WinProbabilityStrategy._candidate_priority(state, action),
+            reverse=True,
+        )[:reroll_slots]
         return tuple(ranked_scores + ranked_rerolls)
 
     @staticmethod
