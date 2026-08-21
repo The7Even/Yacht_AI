@@ -33,7 +33,7 @@ class MonteCarloWinProbabilityEvaluator:
         player_strategy: Strategy | None = None,
         opponent_strategy: Strategy | None = None,
         seed: int | None = None,
-        strong_continuation_turns: int = 2,
+        strong_continuation_turns: int = 4,
         strong_decisions_per_turn: int = 1,
         show_progress: bool = False,
     ) -> None:
