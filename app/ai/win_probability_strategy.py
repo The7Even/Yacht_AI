@@ -56,14 +56,17 @@ class WinProbabilityStrategy:
         candidates = tuple(
             ActionAlternative(action, statistics[action].win_probability) for action in actions
         )
+        max_probability = max(candidate.expected_value for candidate in candidates)
         ordered = tuple(
             sorted(
                 candidates,
-                key=lambda candidate: self._sort_key(state, candidate, statistics),
+                key=lambda candidate: self._sort_key(
+                    state, candidate, statistics, max_probability
+                ),
                 reverse=True,
             )
         )
-        best = self._select_robust_action(state, ordered, statistics)
+        best = self._select_robust_action(state, ordered)
         return DecisionResult(
             action=best.action,
             expected_value=None,
@@ -75,7 +78,6 @@ class WinProbabilityStrategy:
         self,
         state: GameState,
         ordered: tuple[ActionAlternative, ...],
-        statistics: dict[Action, object],
     ) -> ActionAlternative:
         best = ordered[0]
         if best.action.type is not ActionType.REROLL:
@@ -193,7 +195,8 @@ class WinProbabilityStrategy:
         state: GameState,
         candidate: ActionAlternative,
         statistics: dict[Action, object],
-    ) -> tuple[float, float, float, int, tuple[int, ...], str]:
+        max_probability: float,
+    ) -> tuple[float, float, float, float, int, tuple[int, ...], str]:
         action = candidate.action
         stats = statistics[action]
         average_score = float(getattr(stats, "average_score"))
@@ -205,16 +208,18 @@ class WinProbabilityStrategy:
             assert state.current_dice is not None
             immediate_score = float(ScoreCalculator.calculate(action.selected_category, state.current_dice))
 
-        # Monte Carlo win probability remains the primary objective. With a
-        # small simulation budget, however, several actions often tie or sit
-        # within noise-level differences. In that narrow window, prefer the
-        # action whose simulated final score margin is healthier.
-        probability_signal = candidate.expected_value
-        if ordered_window := self._score_tiebreak_window:
-            probability_signal = candidate.expected_value
+        # Win probability is still dominant. Only when candidates are inside
+        # the configured noise window do we add a tiny score-margin signal.
+        # This avoids throwing away a genuinely better winning line while
+        # preventing low-simulation noise from repeatedly selecting poor-score
+        # actions that happen to win in the sampled rollouts.
+        within_window = max_probability - candidate.expected_value <= self._score_tiebreak_window
+        score_signal = score_diff if within_window else 0.0
+        adjusted_probability = candidate.expected_value + (score_signal * 0.0001)
         return (
-            probability_signal,
-            score_diff if abs(candidate.expected_value - candidate.expected_value) <= ordered_window else 0.0,
+            adjusted_probability,
+            candidate.expected_value,
+            score_diff,
             average_score,
             immediate_score,
             1 if action.type is ActionType.SCORE else 0,
