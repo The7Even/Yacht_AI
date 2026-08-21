@@ -29,17 +29,32 @@ def _named_factory(name: str, factory: StrategyFactory) -> StrategyFactory:
     return create
 
 
+def _win_probability_factory(
+    name: str,
+    simulations: int,
+    candidates: int | None,
+    opponent_factory: StrategyFactory,
+) -> StrategyFactory:
+    """Create a WP factory whose rollout models the actual matchup opponent."""
+    def create():
+        return WinProbabilityStrategy(
+            simulation_count=simulations,
+            max_candidates=candidates,
+            opponent_strategy=opponent_factory(),
+            show_progress=False,
+        )
+
+    setattr(create, "__benchmark_name__", name)
+    return create
+
+
 def strategy_specs(
     win_probability_simulations: int,
     win_probability_candidates: int | None = None,
     *,
     quick: bool = False,
 ):
-    """Return the built-in strategies used by the benchmark.
-
-    Quick mode deliberately uses a separate one-step EV implementation so the
-    exact research strategies remain untouched and available for precise runs.
-    """
+    """Return the built-in strategies used by the benchmark."""
     if quick:
         return (
             ("RuleBased", _named_factory("RuleBased", RuleBasedStrategy)),
@@ -110,8 +125,6 @@ def _progress_line(completed: int, total: int, started: float, matchup: str, gam
         f"ETA {_format_duration(remaining)} | "
         f"Current: {matchup} | game {game}/{games} | {turn_text}"
     )
-    # Keep exactly one live progress line. Repeated callbacks during a game
-    # overwrite this line instead of appending another line to the terminal.
     sys.stdout.write("\r\x1b[2K" + text)
     sys.stdout.flush()
 
@@ -149,19 +162,37 @@ def main() -> None:
 
     for index, (name_one, factory_one) in enumerate(specs):
         for name_two, factory_two in specs[index + 1 :]:
-            completed_matchup = completed
+            matchup_number = sum(len(specs) - 1 - i for i in range(index)) + (len(specs) - 1 - index)
             matchup = f"{name_one} vs {name_two}"
-            print(f"[{completed_matchup // args.games + 1}/{pair_count}] {matchup} ...", flush=True)
+            print(f"[{len(results) + 1}/{pair_count}] {matchup} ...", flush=True)
             if not progress_started:
                 print("", flush=True)
                 progress_started = True
+
+            actual_factory_one = factory_one
+            actual_factory_two = factory_two
+
+            if name_one.startswith("WinProbability("):
+                actual_factory_one = _win_probability_factory(
+                    name_one,
+                    args.win_probability_simulations,
+                    candidates,
+                    factory_two,
+                )
+            if name_two.startswith("WinProbability("):
+                actual_factory_two = _win_probability_factory(
+                    name_two,
+                    args.win_probability_simulations,
+                    candidates,
+                    factory_one,
+                )
 
             def on_progress(done: int, total: int, one: str, two: str, game: int, games: int, turn: int) -> None:
                 _progress_line(done, total, started, f"{one} vs {two}", game, games, turn)
 
             result = benchmark.run(
-                factory_one,
-                factory_two,
+                actual_factory_one,
+                actual_factory_two,
                 games=args.games,
                 alternate_first_player=True,
                 progress_callback=on_progress,
