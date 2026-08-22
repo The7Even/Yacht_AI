@@ -39,7 +39,10 @@ class ExpectedValueStrategy:
 
         if remaining_rolls > 0:
             used = self._used_key(available)
-            for action in self._meaningful_reroll_actions(state.held_indices):
+            # Re-evaluate the complete HOLD space on every decision.  A die that
+            # was held on the previous roll is no longer mandatory to keep; FastEV
+            # must be able to release it when another hold set has higher EV.
+            for action in self._meaningful_reroll_actions():
                 expected_value = self.expected_value_for_hold(
                     dice, action.held_indices, remaining_rolls, used
                 )
