@@ -91,7 +91,13 @@ class ActionGenerator:
 
     @staticmethod
     def reroll_actions(required_held_indices: frozenset[int] = frozenset()) -> tuple[Action, ...]:
-        """Return every possible reroll choice, expressed by its held dice."""
+        """Return every possible reroll choice expressed by its held dice.
+
+        ``required_held_indices`` is retained for compatibility with callers
+        that intentionally need a subset-constrained action set.  FastEV's
+        normal search passes an empty set so previously held dice may be
+        released when that produces a better expected value.
+        """
         return tuple(
             Action(ActionType.REROLL, action.held_indices)
             for action in ActionGenerator.hold_actions()
