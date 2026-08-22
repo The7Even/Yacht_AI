@@ -63,6 +63,7 @@ class YachtWindow(QMainWindow):
         self.engine = GameEngine()
         self.ai_strategy = ExpectedValueStrategy()
         self.ai_active = False
+        self.ai_waiting_for_roll = False
         self.ai_status_label = None
         self.ai_timer = QTimer(self)
         self.ai_timer.setSingleShot(True)
@@ -159,7 +160,8 @@ class YachtWindow(QMainWindow):
         layout.addLayout(grid); return wrap
 
     def _build_play_area(self) -> QFrame:
-        card = QFrame(); card.setObjectName("card"); layout = QVBoxLayout(card); layout.setContentsMargins(14, 9, 14, 9); layout.setSpacing(6); top = QHBoxLayout(); caption = QLabel("주사위 굴리기"); caption.setObjectName("section"); top.addWidget(caption); top.addStretch(); self.roll_label = QLabel("3회 남음"); self.roll_label.setObjectName("rollRemaining"); top.addWidget(self.roll_label); layout.addLayout(top)
+        card = QFrame(); card.setObjectName("card"); layout = QVBoxLayout(card); layout.setContentsMargins(14, 9, 14, 9); layout.setSpacing(6)
+        top = QHBoxLayout(); caption = QLabel("주사위 굴리기"); caption.setObjectName("section"); top.addWidget(caption); top.addStretch(); self.roll_label = QLabel("3회 남음"); self.roll_label.setObjectName("rollRemaining"); top.addWidget(self.roll_label); layout.addLayout(top)
         dice = QHBoxLayout(); dice.setSpacing(10)
         for index in range(5):
             button = QPushButton("-"); button.setObjectName("die"); button.clicked.connect(lambda _=False, i=index: self.toggle_hold(i)); self.die_buttons.append(button); dice.addWidget(button, 1)
@@ -179,10 +181,12 @@ class YachtWindow(QMainWindow):
         layout.addLayout(special_grid); return card
 
     def _build_ai_panel(self) -> QFrame:
-        outer = QFrame(); outer.setObjectName("card"); layout = QVBoxLayout(outer); layout.setContentsMargins(10, 9, 10, 9); title = QLabel("AI 진행 상황"); title.setObjectName("section"); layout.addWidget(title); self.ai_status_label = QLabel("AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\nPLAYER 턴을 기다리는 중입니다."); self.ai_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_status_label.setObjectName("aiStatus"); self.ai_status_label.setWordWrap(True); layout.addWidget(self.ai_status_label, 1); log_title = QLabel("게임 로그"); log_title.setObjectName("section"); layout.addWidget(log_title); self.log_label = QLabel("게임이 시작되었습니다.\nPLAYER 턴입니다."); self.log_label.setObjectName("log"); self.log_label.setWordWrap(True); layout.addWidget(self.log_label); return outer
+        outer = QFrame(); outer.setObjectName("card"); layout = QVBoxLayout(outer); layout.setContentsMargins(10, 9, 10, 9); title = QLabel("AI 진행 상황"); title.setObjectName("section"); layout.addWidget(title)
+        self.ai_status_label = QLabel("AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\nPLAYER 턴을 기다리는 중입니다."); self.ai_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_status_label.setObjectName("aiStatus"); self.ai_status_label.setWordWrap(True); layout.addWidget(self.ai_status_label, 1)
+        log_title = QLabel("게임 로그"); log_title.setObjectName("section"); layout.addWidget(log_title); self.log_label = QLabel("게임이 시작되었습니다.\nPLAYER 턴입니다."); self.log_label.setObjectName("log"); self.log_label.setWordWrap(True); layout.addWidget(self.log_label); return outer
 
     def start_new_game(self) -> None:
-        self.ai_timer.stop(); self.ai_active = False; self.engine.start_game(); self._refresh(); self._set_status("0/3회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다."); self._set_ai_status("AI (FastEV)\n\nPLAYER 턴을 기다리는 중입니다.")
+        self.ai_timer.stop(); self.ai_active = False; self.ai_waiting_for_roll = False; self.engine.start_game(); self._refresh(); self._set_status("0/3회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다."); self._set_ai_status("AI (FastEV)\n\nPLAYER 턴을 기다리는 중입니다.")
 
     def roll_dice(self) -> None:
         if self.ai_active: return
@@ -207,35 +211,61 @@ class YachtWindow(QMainWindow):
         if self.engine.is_game_over(): self._finish_game(score, category); return
         try: self.engine.begin_ai_turn()
         except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); return
-        self.ai_active = True; self._refresh(); self._set_status(f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. AI 턴을 시작합니다."); self._set_ai_status("AI (FastEV)\n\nAI 턴을 준비하고 있습니다..."); self.ai_timer.start(500)
+        self.ai_active = True; self.ai_waiting_for_roll = False; self._refresh(); self._set_status(f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. AI 턴을 시작합니다."); self._set_ai_status("AI (FastEV)\n\nAI 턴을 준비하고 있습니다...\n\n첫 번째 주사위를 굴립니다."); self.ai_timer.start(700)
+
+    def _ai_roll(self) -> None:
+        try: dice = self.engine.roll_dice()
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n오류: {exc}"); self._finish_ai_turn(); return
+        self._refresh(dice)
+        roll_no = self.engine.state.roll_count
+        remaining = MAX_ROLLS_PER_TURN - roll_no
+        if roll_no >= MAX_ROLLS_PER_TURN:
+            self._set_status(f"AI가 {roll_no}/3회 주사위를 굴렸습니다. 마지막 조합을 분석합니다.")
+            self._set_ai_status(f"AI (FastEV)\n\n{roll_no}/3회 굴림 완료\n\n마지막 주사위 조합을 분석하고 기록할 항목을 결정합니다...")
+        else:
+            self._set_status(f"AI가 {roll_no}/3회 주사위를 굴렸습니다.")
+            self._set_ai_status(f"AI (FastEV)\n\n{roll_no}/3회 굴림 완료\n남은 굴림: {remaining}회\n\n주사위 조합을 분석하는 중입니다...")
+        self.ai_timer.start(950)
 
     def _run_ai_decision(self) -> None:
         if not self.ai_active: return
         state = self.engine.state
         if state.current_player is not PlayerId.AI or state.turn_scored:
             self._finish_ai_turn(); return
+        if self.ai_waiting_for_roll:
+            self.ai_waiting_for_roll = False
+            self._ai_roll()
+            return
         if state.current_dice is None:
-            try: dice = self.engine.roll_dice()
-            except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n오류: {exc}"); self._finish_ai_turn(); return
-            self._refresh(dice); roll_no = state.roll_count; self._set_status(f"AI가 {roll_no}/3회 주사위를 굴렸습니다."); self._set_ai_status(f"AI (FastEV)\n\n{roll_no}/3회 굴림 완료\n\n현재 주사위 조합을 분석하는 중입니다..."); self.ai_timer.start(450); return
-
+            self._ai_roll()
+            return
         try: decision = self.ai_strategy.decide(state)
-        except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n분석 오류: {exc}"); self._finish_ai_turn(); return
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n분석 오류: {exc}"); self._finish_ai_turn(); return
         self.engine.last_ai_action = decision.action; self.engine.last_ai_reasoning = decision.reasoning
         if decision.action.type is ActionType.SCORE:
-            category = decision.action.selected_category; assert category is not None; score = self.engine.score_category(category); self._refresh(); self._set_status(f"AI가 {CATEGORY_SHORT[category]}을(를) 선택해 {score}점을 기록합니다."); self._set_ai_status(f"AI (FastEV)\n\n기록 선택\n{CATEGORY_SHORT[category]} · {score}점\n\n{decision.reasoning}"); self.ai_timer.start(800); return
-
+            category = decision.action.selected_category; assert category is not None; score = self.engine.score_category(category); self._refresh(); self._set_status(f"AI가 {CATEGORY_SHORT[category]}을(를) 선택해 {score}점을 기록합니다."); self._set_ai_status(f"AI (FastEV)\n\n기록 선택\n{CATEGORY_SHORT[category]} · {score}점\n\n{decision.reasoning}"); self.ai_timer.start(1100); return
         desired = frozenset(decision.action.held_indices); current = self.engine.state.held_indices
         for index in sorted(current - desired): self.engine.unhold_dice(index)
         for index in sorted(desired - current): self.engine.hold_dice(index)
-        self._refresh(); held_text = ", ".join(str(i + 1) for i in sorted(desired)) if desired else "없음"; self._set_status(f"AI가 {len(desired)}개 주사위를 HOLD했습니다. 다음 굴림을 준비합니다."); self._set_ai_status(f"AI (FastEV)\n\n{state.roll_count}/3회 굴림\nHOLD: {held_text}\n\n{decision.reasoning}"); self.ai_timer.start(650)
+        self._refresh(); held_text = ", ".join(str(i + 1) for i in sorted(desired)) if desired else "없음"
+        if state.roll_count >= MAX_ROLLS_PER_TURN:
+            self._set_status("AI의 마지막 굴림이 완료되었습니다. 기록할 점수를 결정합니다.")
+            self._set_ai_status(f"AI (FastEV)\n\n최종 조합 분석\nHOLD: {held_text}\n\n{decision.reasoning}")
+            self.ai_timer.start(500)
+        else:
+            self._set_status(f"AI가 {len(desired)}개 주사위를 HOLD했습니다. 다음 굴림을 준비합니다.")
+            self._set_ai_status(f"AI (FastEV)\n\n{state.roll_count}/3회 굴림\nHOLD: {held_text}\n남은 굴림: {MAX_ROLLS_PER_TURN - state.roll_count}회\n\n{decision.reasoning}")
+            self.ai_waiting_for_roll = True
+            self.ai_timer.start(900)
 
     def _finish_ai_turn(self) -> None:
         if not self.ai_active: return
         if self.engine.state.turn_scored:
             try: self.engine.finish_ai_turn()
             except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n턴 종료 오류: {exc}"); self.ai_active = False; return
-        self.ai_active = False; self._refresh()
+        self.ai_active = False; self.ai_waiting_for_roll = False; self._refresh()
         if self.engine.is_game_over(): self._show_final_result(); return
         self._set_status(f"AI 턴이 끝났습니다. 다음은 PLAYER {self.engine.state.turn}턴입니다."); self._set_ai_status("AI (FastEV)\n\nAI 턴 완료\n\nPLAYER의 다음 턴을 기다리는 중입니다.")
 
@@ -254,8 +284,6 @@ class YachtWindow(QMainWindow):
             button.setProperty("held", index in state.held_indices); button.style().unpolish(button); button.style().polish(button); button.setEnabled(value is not None and not self.ai_active and state.current_player is PlayerId.PLAYER and not state.turn_scored)
         remaining = max(0, MAX_ROLLS_PER_TURN - state.roll_count); self.roll_label.setText(f"{remaining}회 남음"); self.roll_button.setEnabled(not self.ai_active and state.current_player is PlayerId.PLAYER and not state.turn_scored and state.roll_count < MAX_ROLLS_PER_TURN)
         available: set[Category] = set(); scores: dict[Category, int] = {}
-        # score_category() marks the turn as scored before _refresh() is called.
-        # Do not query turn-only engine APIs during that short transition state.
         if state.current_dice and state.current_player is PlayerId.PLAYER and not self.ai_active and not state.turn_scored:
             available = set(self.engine.get_available_categories()); scores = self.engine.get_current_scores()
         for category, button in self.category_buttons.items():
