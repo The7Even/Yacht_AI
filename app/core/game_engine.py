@@ -5,7 +5,6 @@ from .dice import DICE_COUNT, DiceRoller
 from .game_state import GameState, PlayerId
 from .scoring import ScoreCalculator
 
-
 MAX_ROLLS_PER_TURN = 3
 
 
@@ -38,9 +37,7 @@ class GameEngine:
         if self.state.current_dice is None:
             self.state.current_dice = self._dice_roller.roll(DICE_COUNT)
         else:
-            self.state.current_dice = self._dice_roller.reroll(
-                self.state.current_dice, self.state.held_indices
-            )
+            self.state.current_dice = self._dice_roller.reroll(self.state.current_dice, self.state.held_indices)
         self.state.roll_count += 1
         return self.state.current_dice
 
@@ -69,10 +66,7 @@ class GameEngine:
         if self.state.game_over:
             return {}
         self._require_turn_with_dice()
-        return {
-            category: ScoreCalculator.calculate(category, self.state.current_dice)
-            for category in self.get_available_categories()
-        }
+        return {category: ScoreCalculator.calculate(category, self.state.current_dice) for category in self.get_available_categories()}
 
     def score_category(self, category: Category) -> int:
         self._require_turn_with_dice()
@@ -89,7 +83,7 @@ class GameEngine:
         return score
 
     def begin_ai_turn(self) -> GameState:
-        """Switch to the AI after a scored PLAYER turn without blocking the UI."""
+        """Switch to AI after a scored PLAYER turn without blocking the UI."""
         self._require_active_game()
         if self.state.current_player is not PlayerId.PLAYER:
             raise RuntimeError("AI turns can only begin after a PLAYER turn.")
@@ -107,13 +101,13 @@ class GameEngine:
 
     def finish_ai_turn(self) -> GameState:
         """Return control to PLAYER after the AI has committed its category."""
+        if self.state.game_over:
+            return self.state
         self._require_active_game()
         if self.state.current_player is not PlayerId.AI:
             raise RuntimeError("AI must be active to finish an AI turn.")
         if not self.state.turn_scored:
             raise RuntimeError("The AI must score a category before its turn can end.")
-        if self.state.game_over:
-            return self.state
         self.state.current_player = PlayerId.PLAYER
         self.state.turn += 1
         self.state.current_dice = None
@@ -133,9 +127,7 @@ class GameEngine:
         if player_only:
             self._finish_player_and_play_ai()
             return self.state
-        self.state.current_player = (
-            PlayerId.AI if self.state.current_player is PlayerId.PLAYER else PlayerId.PLAYER
-        )
+        self.state.current_player = PlayerId.AI if self.state.current_player is PlayerId.PLAYER else PlayerId.PLAYER
         self.state.turn += 1
         self.state.current_dice = None
         self.state.held_indices = frozenset()
@@ -148,7 +140,6 @@ class GameEngine:
         """Legacy synchronous AI turn retained for console/benchmark clients."""
         from app.ai.expected_value_strategy import ExpectedValueStrategy
         from app.ai.action_generator import ActionType
-
         self.begin_ai_turn()
         strategy = ExpectedValueStrategy()
         self.last_ai_action = None
