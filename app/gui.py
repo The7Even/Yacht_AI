@@ -453,10 +453,13 @@ class YachtWindow(QMainWindow):
             self._set_status(str(exc))
             return
         self._refresh(dice)
-        self._set_status(
-            f"{self.engine.state.roll_count}/{MAX_ROLLS_PER_TURN}회 굴렸습니다. "
-            "주사위를 클릭하면 HOLD할 수 있습니다."
-        )
+        if self.engine.state.roll_count >= MAX_ROLLS_PER_TURN:
+            self._set_status("3/3회 굴렸습니다. 아래에서 기록할 점수 항목을 선택해 주세요.")
+        else:
+            self._set_status(
+                f"{self.engine.state.roll_count}/{MAX_ROLLS_PER_TURN}회 굴렸습니다. "
+                "주사위를 클릭하면 HOLD할 수 있습니다."
+            )
 
     def toggle_hold(self, index: int) -> None:
         if self.engine.state.current_dice is None:
