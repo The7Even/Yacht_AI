@@ -97,6 +97,23 @@ def _paired_branch(template: GameEngine, first_category: Category, seed: int, st
     return _finish_game(branch, strategy)
 
 
+def _print_progress(done: int, total: int, samples: int, rollouts: int, *, force: bool = False) -> None:
+    """Print one in-place progress line, including the current sample/rollout."""
+    pct = done / total * 100 if total else 100.0
+    width = 40
+    filled = int(width * pct / 100)
+    bar = "#" * filled + "." * (width - filled)
+    current_sample = min(samples, done // max(1, rollouts) + (1 if done % max(1, rollouts) else 0))
+    current_rollout = done % max(1, rollouts)
+    if current_rollout == 0 and done:
+        current_rollout = rollouts
+    text = (
+        f"\rChoice Value [{bar}] {pct:6.2f}% | {done}/{total} branches "
+        f"| sample {current_sample}/{samples} | rollout {current_rollout}/{rollouts}"
+    )
+    print(text, end="", flush=True)
+
+
 def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> Path:
     if samples <= 0 or rollouts <= 0:
         raise ValueError("samples and rollouts must be positive")
@@ -107,8 +124,14 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
 
     rng = random.Random(seed)
     strategy = ExpectedValueStrategy()
-    total = samples * rollouts
+    total = samples * rollouts * 2  # Choice branch + Other branch for every paired rollout.
     done = 0
+
+    print(
+        f"Choice Value: starting {samples} samples × {rollouts} rollouts "
+        f"({total} branch simulations)"
+    )
+    _print_progress(done, total, samples, rollouts)
 
     with output.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
@@ -126,8 +149,14 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
 
             for rollout in range(1, rollouts + 1):
                 branch_seed = rng.randrange(2**63)
+
                 choice_result = _paired_branch(template, Category.CHOICE, branch_seed, strategy)
+                done += 1
+                _print_progress(done, total, samples, rollouts)
+
                 other_result = _paired_branch(template, best_other, branch_seed, strategy)
+                done += 1
+                _print_progress(done, total, samples, rollouts)
 
                 choice_total = choice_result[0] + choice_result[1]
                 other_total = other_result[0] + other_result[1]
@@ -149,16 +178,9 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
                     "other_better": int(delta < 0),
                     "draw": int(delta == 0),
                 })
-
-                done += 1
-                if done == total or done % max(1, total // 100) == 0:
-                    pct = done / total * 100
-                    width = 40
-                    filled = int(width * pct / 100)
-                    bar = "#" * filled + "." * (width - filled)
-                    print(f"\rChoice Value [{bar}] {pct:6.2f}% | {done}/{total} rollouts", end="", flush=True)
             handle.flush()
 
+    _print_progress(total, total, samples, rollouts)
     print(f"\nSaved: {output}")
     return output
 
