@@ -11,10 +11,7 @@ use the same subsequent dice seed, making the comparison less sensitive to
 unrelated random rolls.
 
 The expensive paired rollouts are processed in parallel worker processes so
-large experiments do not spend most of their time waiting on a single CPU core.
-
-Example::
-    python -m app.ai.compare_choice_value --samples 500 --rollouts 20
+large experiments can use multiple CPU cores.
 """
 
 from __future__ import annotations
@@ -23,6 +20,7 @@ import argparse
 import copy
 import csv
 import json
+import os
 import random
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
@@ -44,11 +42,13 @@ FIELDS = (
 )
 
 _WORKER_STRATEGY: ExpectedValueStrategy | None = None
+_WORKER_ROLLOUTS = 10
 
 
-def _worker_init() -> None:
-    global _WORKER_STRATEGY
+def _worker_init(rollouts: int) -> None:
+    global _WORKER_STRATEGY, _WORKER_ROLLOUTS
     _WORKER_STRATEGY = ExpectedValueStrategy()
+    _WORKER_ROLLOUTS = rollouts
 
 
 def _worker_strategy() -> ExpectedValueStrategy:
@@ -109,24 +109,21 @@ def _finish_game(engine: GameEngine, strategy: ExpectedValueStrategy) -> tuple[i
 
 def _paired_branch(template: GameEngine, first_category: Category, seed: int, strategy: ExpectedValueStrategy) -> tuple[int, int]:
     branch = copy.deepcopy(template)
-    # GameEngine.roll_dice() reads the private _dice_roller field.
     branch._dice_roller = DiceRoller(random.Random(seed))
     _score_first_turn(branch, first_category)
     return _finish_game(branch, strategy)
 
 
-def _simulate_sample(payload: tuple[int, GameEngine, tuple[int, ...], Category, int, int]) -> list[dict[str, object]]:
-    """Run all paired rollouts for one first-turn sample in one worker."""
-    sample, template, first_dice, baseline_category, choice_score, best_other_score = payload
+def _simulate_sample(payload: tuple[int, GameEngine, tuple[int, ...], Category, int, int, int]) -> list[dict[str, object]]:
+    sample, template, first_dice, baseline_category, choice_score, best_other_score, seed = payload
     strategy = _worker_strategy()
     best_other = max(
         (category for category in ALL_CATEGORIES if category is not Category.CHOICE),
         key=lambda category: ScoreCalculator.calculate(category, first_dice),
     )
+    rollout_rng = random.Random(seed)
     rows: list[dict[str, object]] = []
-    # A deterministic local RNG gives each rollout a distinct continuation seed.
-    rollout_rng = random.Random((sample << 32) ^ choice_score ^ best_other_score)
-    for rollout in range(1, _ROLLS_PER_TASK + 1):
+    for rollout in range(1, _WORKER_ROLLOUTS + 1):
         branch_seed = rollout_rng.randrange(2**63)
         choice_result = _paired_branch(template, Category.CHOICE, branch_seed, strategy)
         other_result = _paired_branch(template, best_other, branch_seed, strategy)
@@ -152,7 +149,7 @@ def _simulate_sample(payload: tuple[int, GameEngine, tuple[int, ...], Category, 
     return rows
 
 
-def _print_progress(done_branches: int, total_branches: int, samples: int, rollouts: int) -> None:
+def _print_progress(done_branches: int, total_branches: int, samples: int, rollouts: int, workers: int) -> None:
     pct = done_branches / total_branches * 100 if total_branches else 100.0
     width = 40
     filled = int(width * pct / 100)
@@ -160,13 +157,12 @@ def _print_progress(done_branches: int, total_branches: int, samples: int, rollo
     completed_samples = done_branches // (rollouts * 2)
     text = (
         f"\rChoice Value [{bar}] {pct:6.2f}% | {done_branches}/{total_branches} branches "
-        f"| {completed_samples}/{samples} samples | workers"
+        f"| {completed_samples}/{samples} samples | {workers} workers"
     )
     print(text, end="", flush=True)
 
 
 def run(samples: int, rollouts: int, seed: int, output: Path | None = None, workers: int | None = None) -> Path:
-    global _ROLLS_PER_TASK
     if samples <= 0 or rollouts <= 0:
         raise ValueError("samples and rollouts must be positive")
     logs = Path("logs")
@@ -177,15 +173,14 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None, work
     rng = random.Random(seed)
     strategy = ExpectedValueStrategy()
     total_branches = samples * rollouts * 2
-    _ROLLS_PER_TASK = rollouts
     max_workers = workers or max(1, (os.cpu_count() or 2) - 1)
     print(
         f"Choice Value: starting {samples} samples × {rollouts} rollouts "
         f"({total_branches} branch simulations, {max_workers} workers)"
     )
-    _print_progress(0, total_branches, samples, rollouts)
+    _print_progress(0, total_branches, samples, rollouts, max_workers)
 
-    payloads: list[tuple[int, GameEngine, tuple[int, ...], Category, int, int]] = []
+    payloads: list[tuple[int, GameEngine, tuple[int, ...], Category, int, int, int]] = []
     for sample in range(1, samples + 1):
         first_seed = rng.randrange(2**63)
         base = GameEngine(dice_roller=DiceRoller(random.Random(first_seed)))
@@ -196,22 +191,29 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None, work
             key=lambda category: ScoreCalculator.calculate(category, first_dice),
         )
         best_other_score = ScoreCalculator.calculate(best_other, first_dice)
-        payloads.append((sample, copy.deepcopy(base), first_dice, baseline_category, choice_score, best_other_score))
+        payloads.append((
+            sample, copy.deepcopy(base), first_dice, baseline_category,
+            choice_score, best_other_score, rng.randrange(2**63),
+        ))
 
     completed_samples = 0
     with output.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
         writer.writeheader()
-        with ProcessPoolExecutor(max_workers=max_workers, initializer=_worker_init) as executor:
+        with ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=_worker_init,
+            initargs=(rollouts,),
+        ) as executor:
             futures = [executor.submit(_simulate_sample, payload) for payload in payloads]
             for future in as_completed(futures):
                 rows = future.result()
                 writer.writerows(rows)
                 handle.flush()
                 completed_samples += 1
-                _print_progress(completed_samples * rollouts * 2, total_branches, samples, rollouts)
+                _print_progress(completed_samples * rollouts * 2, total_branches, samples, rollouts, max_workers)
 
-    _print_progress(total_branches, total_branches, samples, rollouts)
+    _print_progress(total_branches, total_branches, samples, rollouts, max_workers)
     print(f"\nSaved: {output}")
     return output
 
@@ -229,6 +231,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    import os
-    _ROLLS_PER_TASK = 10
     raise SystemExit(main())
