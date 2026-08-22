@@ -160,25 +160,26 @@ class YachtWindow(QMainWindow):
 
     def _build_play_area(self) -> QFrame:
         card = QFrame(); card.setObjectName("card"); layout = QVBoxLayout(card); layout.setContentsMargins(14, 9, 14, 9); layout.setSpacing(6); top = QHBoxLayout(); caption = QLabel("주사위 굴리기"); caption.setObjectName("section"); top.addWidget(caption); top.addStretch(); self.roll_label = QLabel("3회 남음"); self.roll_label.setObjectName("rollRemaining"); top.addWidget(self.roll_label); layout.addLayout(top)
-        dice = QHBoxLayout(); dice.setSpacing(9)
+        dice = QHBoxLayout(); dice.setSpacing(10)
         for index in range(5):
-            button = QPushButton("-"); button.setObjectName("die"); button.setProperty("held", False); button.setIconSize(QSize(98, 98)); button.clicked.connect(lambda _=False, idx=index: self.toggle_hold(idx)); dice.addWidget(button, 1); self.die_buttons.append(button)
-        layout.addLayout(dice); self.status_label = QLabel("0/3회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다."); self.status_label.setObjectName("status"); self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); layout.addWidget(self.status_label)
-        self.roll_button = QPushButton("🎲  주사위 굴리기"); self.roll_button.setObjectName("roll"); self.roll_button.clicked.connect(self.roll_dice); layout.addWidget(self.roll_button); title = QLabel("카테고리 선택"); title.setObjectName("section"); layout.addWidget(title); layout.addWidget(self._category_group("기본 점수 (Ones ~ Sixes)", UPPER_CATEGORIES)); layout.addWidget(self._category_group("특수 족보", SPECIAL_CATEGORIES, special=True)); return card
-
-    def _category_group(self, title: str, categories: Iterable[Category], special: bool = False) -> QFrame:
-        wrap = QFrame(); layout = QVBoxLayout(wrap); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(2); subsection = QLabel(title); subsection.setObjectName("subsection"); layout.addWidget(subsection); grid = QGridLayout(); grid.setSpacing(5)
-        for index, category in enumerate(categories):
-            button = QPushButton(); button.setObjectName("category"); button.setProperty("available", False); button.setProperty("special", special)
-            if category in self.category_icons: button.setIcon(self.category_icons[category]); button.setIconSize(QSize(88, 42))
-            elif category.is_upper and category.upper_face in self.dice_icons: button.setIcon(self.dice_icons[category.upper_face]); button.setIconSize(QSize(34, 34))
-            button.setText(f"{CATEGORY_SHORT[category]}\n사용 가능 점수: -"); button.clicked.connect(lambda _=False, cat=category: self.score_category(cat)); self.category_buttons[category] = button; grid.addWidget(button, index // 3, index % 3)
-        layout.addLayout(grid); return wrap
+            button = QPushButton("-"); button.setObjectName("die"); button.clicked.connect(lambda _=False, i=index: self.toggle_hold(i)); self.die_buttons.append(button); dice.addWidget(button, 1)
+        layout.addLayout(dice)
+        self.status_label = QLabel("0/3회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다."); self.status_label.setObjectName("status"); self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); layout.addWidget(self.status_label)
+        self.roll_button = QPushButton("🎲  주사위 굴리기"); self.roll_button.setObjectName("roll"); self.roll_button.clicked.connect(self.roll_dice); layout.addWidget(self.roll_button)
+        section = QLabel("카테고리 선택"); section.setObjectName("section"); layout.addWidget(section)
+        sub = QLabel("기본 점수 (Ones ~ Sixes)"); sub.setObjectName("subsection"); layout.addWidget(sub)
+        upper_grid = QGridLayout(); upper_grid.setHorizontalSpacing(5); upper_grid.setVerticalSpacing(5)
+        for index, category in enumerate(UPPER_CATEGORIES):
+            button = QPushButton(); button.setObjectName("category"); button.setIcon(self.dice_icons.get(index + 1, QIcon())); button.setIconSize(QSize(34, 34)); button.setProperty("available", False); button.clicked.connect(lambda _=False, cat=category: self.score_category(cat)); self.category_buttons[category] = button; upper_grid.addWidget(button, index // 3, index % 3)
+        layout.addLayout(upper_grid)
+        sub2 = QLabel("특수 족보"); sub2.setObjectName("subsection"); layout.addWidget(sub2)
+        special_grid = QGridLayout(); special_grid.setHorizontalSpacing(5); special_grid.setVerticalSpacing(5)
+        for index, category in enumerate(SPECIAL_CATEGORIES):
+            button = QPushButton(); button.setObjectName("category"); button.setProperty("special", True); button.setIcon(self.category_icons.get(category, QIcon())); button.setIconSize(QSize(72, 42)); button.setProperty("available", False); button.clicked.connect(lambda _=False, cat=category: self.score_category(cat)); self.category_buttons[category] = button; special_grid.addWidget(button, index // 3, index % 3)
+        layout.addLayout(special_grid); return card
 
     def _build_ai_panel(self) -> QFrame:
-        outer = QFrame(); outer.setObjectName("card"); layout = QVBoxLayout(outer); layout.setContentsMargins(9, 9, 9, 9); title = QLabel("AI 진행 상황"); title.setObjectName("section"); layout.addWidget(title)
-        self.ai_status_label = QLabel("AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\nPLAYER 턴을 기다리는 중입니다."); self.ai_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_status_label.setObjectName("aiStatus"); self.ai_status_label.setWordWrap(True); layout.addWidget(self.ai_status_label, 1)
-        log_title = QLabel("게임 로그"); log_title.setObjectName("section"); layout.addWidget(log_title); self.log_label = QLabel("게임이 시작되었습니다.\nPLAYER 턴입니다."); self.log_label.setObjectName("log"); self.log_label.setWordWrap(True); layout.addWidget(self.log_label); return outer
+        outer = QFrame(); outer.setObjectName("card"); layout = QVBoxLayout(outer); layout.setContentsMargins(10, 9, 10, 9); title = QLabel("AI 진행 상황"); title.setObjectName("section"); layout.addWidget(title); self.ai_status_label = QLabel("AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\nPLAYER 턴을 기다리는 중입니다."); self.ai_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_status_label.setObjectName("aiStatus"); self.ai_status_label.setWordWrap(True); layout.addWidget(self.ai_status_label, 1); log_title = QLabel("게임 로그"); log_title.setObjectName("section"); layout.addWidget(log_title); self.log_label = QLabel("게임이 시작되었습니다.\nPLAYER 턴입니다."); self.log_label.setObjectName("log"); self.log_label.setWordWrap(True); layout.addWidget(self.log_label); return outer
 
     def start_new_game(self) -> None:
         self.ai_timer.stop(); self.ai_active = False; self.engine.start_game(); self._refresh(); self._set_status("0/3회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다."); self._set_ai_status("AI (FastEV)\n\nPLAYER 턴을 기다리는 중입니다.")
@@ -253,7 +254,10 @@ class YachtWindow(QMainWindow):
             button.setProperty("held", index in state.held_indices); button.style().unpolish(button); button.style().polish(button); button.setEnabled(value is not None and not self.ai_active and state.current_player is PlayerId.PLAYER and not state.turn_scored)
         remaining = max(0, MAX_ROLLS_PER_TURN - state.roll_count); self.roll_label.setText(f"{remaining}회 남음"); self.roll_button.setEnabled(not self.ai_active and state.current_player is PlayerId.PLAYER and not state.turn_scored and state.roll_count < MAX_ROLLS_PER_TURN)
         available: set[Category] = set(); scores: dict[Category, int] = {}
-        if state.current_dice and state.current_player is PlayerId.PLAYER and not self.ai_active: available = set(self.engine.get_available_categories()); scores = self.engine.get_current_scores()
+        # score_category() marks the turn as scored before _refresh() is called.
+        # Do not query turn-only engine APIs during that short transition state.
+        if state.current_dice and state.current_player is PlayerId.PLAYER and not self.ai_active and not state.turn_scored:
+            available = set(self.engine.get_available_categories()); scores = self.engine.get_current_scores()
         for category, button in self.category_buttons.items():
             is_available = category in available; button.setProperty("available", is_available); button.setText(f"{CATEGORY_SHORT[category]}\n사용 가능 점수: {scores[category]}점" if is_available else f"{CATEGORY_SHORT[category]}\n사용됨"); button.setEnabled(is_available and not self.ai_active); button.style().unpolish(button); button.style().polish(button)
         for category in ALL_CATEGORIES:
