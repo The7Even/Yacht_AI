@@ -34,14 +34,14 @@ QLabel#title { font-size: 34px; font-weight: 800; color: #f4f7fb; }
 QLabel#muted { color: #9aaac0; font-size: 12px; }
 QLabel#score { font-size: 27px; font-weight: 800; }
 QLabel#section { font-size: 15px; font-weight: 800; }
-QLabel#subsection { font-size: 11px; font-weight: 800; color: #b7c6d9; padding-top: 1px; }
-QLabel#scorecardTitle { font-size: 12px; font-weight: 800; color: #e8edf7; }
+QLabel#subsection { font-size: 11px; font-weight: 800; color: #b7c6d9; padding-top: 0px; }
+QLabel#scorecardTitle { font-size: 10px; font-weight: 800; color: #e8edf7; }
 QLabel#scoreGap { font-size: 14px; font-weight: 700; color: #8fbfff; }
 QLabel#scoreGapNegative { font-size: 14px; font-weight: 700; color: #ff9aaa; }
-QLabel#playerHeader { color: #64a9ff; font-size: 12px; font-weight: 800; }
-QLabel#aiHeader { color: #ff7f91; font-size: 12px; font-weight: 800; }
-QLabel#playerCell { background: #14375f; border: 1px solid #285f98; border-radius: 5px; padding: 3px 2px; color: #78b5ff; font-size: 12px; font-weight: 800; }
-QLabel#aiCell { background: #4a2731; border: 1px solid #8b4654; border-radius: 5px; padding: 3px 2px; color: #ff9aaa; font-size: 12px; font-weight: 800; }
+QLabel#playerHeader { color: #64a9ff; font-size: 10px; font-weight: 800; }
+QLabel#aiHeader { color: #ff7f91; font-size: 10px; font-weight: 800; }
+QLabel#playerCell { background: #14375f; border: 1px solid #285f98; border-radius: 5px; padding: 5px 2px; color: #78b5ff; font-size: 12px; font-weight: 800; min-height: 22px; }
+QLabel#aiCell { background: #4a2731; border: 1px solid #8b4654; border-radius: 5px; padding: 5px 2px; color: #ff9aaa; font-size: 12px; font-weight: 800; min-height: 22px; }
 QPushButton { background: #1a2a41; border: 1px solid #314966; border-radius: 8px; padding: 9px 12px; color: #e8edf7; font-size: 12px; }
 QPushButton:hover { background: #223957; }
 QPushButton:disabled { color: #65758b; background: #162234; border-color: #243247; }
@@ -256,35 +256,35 @@ class YachtWindow(QMainWindow):
         layout.addWidget(self.turn_label)
         return frame
 
+    def _configure_score_columns(self, grid: QGridLayout) -> None:
+        grid.setColumnStretch(0, 2)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+
     def _build_scorecard(self) -> QFrame:
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(7, 3, 7, 6)
-        layout.setSpacing(4)
+        layout.setContentsMargins(7, 2, 7, 6)
+        layout.setSpacing(3)
 
-        # Keep the title, but put it directly into the header row so it
-        # consumes no extra vertical row of its own.
         header = QGridLayout()
         header.setContentsMargins(3, 0, 3, 0)
         header.setHorizontalSpacing(4)
+        header.setVerticalSpacing(0)
 
         title = QLabel("점수판")
         title.setObjectName("scorecardTitle")
-        header.addWidget(title, 0, 0)
-
         ph = QLabel("PLAYER")
         ph.setObjectName("playerHeader")
         ph.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ah = QLabel("AI")
         ah.setObjectName("aiHeader")
         ah.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.addWidget(title, 0, 0)
         header.addWidget(ph, 0, 1)
         header.addWidget(ah, 0, 2)
-
-        header.setColumnStretch(0, 2)
-        header.setColumnStretch(1, 1)
-        header.setColumnStretch(2, 1)
+        self._configure_score_columns(header)
         layout.addLayout(header)
 
         layout.addWidget(self._score_section("기본 점수", UPPER_CATEGORIES))
@@ -292,8 +292,9 @@ class YachtWindow(QMainWindow):
         upper_summary = QFrame()
         upper_summary.setObjectName("scoreRow")
         summary = QGridLayout(upper_summary)
-        summary.setContentsMargins(5, 4, 5, 4)
+        summary.setContentsMargins(5, 3, 5, 3)
         summary.setHorizontalSpacing(4)
+        summary.setVerticalSpacing(3)
         summary.addWidget(QLabel("상단 합계"), 0, 0)
 
         self.player_upper_label = QLabel("0 / 63")
@@ -314,6 +315,7 @@ class YachtWindow(QMainWindow):
         self.ai_bonus_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
         summary.addWidget(self.player_bonus_summary, 1, 1)
         summary.addWidget(self.ai_bonus_summary, 1, 2)
+        self._configure_score_columns(summary)
         layout.addWidget(upper_summary)
 
         layout.addWidget(self._score_section("특수 족보", SPECIAL_CATEGORIES))
@@ -321,7 +323,7 @@ class YachtWindow(QMainWindow):
         total_row = QFrame()
         total_row.setObjectName("scoreRow")
         total = QGridLayout(total_row)
-        total.setContentsMargins(5, 4, 5, 4)
+        total.setContentsMargins(5, 3, 5, 3)
         total.setHorizontalSpacing(4)
         total.addWidget(QLabel("총합"), 0, 0)
 
@@ -333,6 +335,7 @@ class YachtWindow(QMainWindow):
         self.ai_table_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
         total.addWidget(self.player_table_total, 0, 1)
         total.addWidget(self.ai_table_total, 0, 2)
+        self._configure_score_columns(total)
         layout.addWidget(total_row)
         return card
 
@@ -340,7 +343,7 @@ class YachtWindow(QMainWindow):
         wrap = QFrame()
         layout = QVBoxLayout(wrap)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(1)
 
         subsection = QLabel(title)
         subsection.setObjectName("subsection")
@@ -349,7 +352,8 @@ class YachtWindow(QMainWindow):
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(4)
-        grid.setVerticalSpacing(2)
+        grid.setVerticalSpacing(3)
+        self._configure_score_columns(grid)
 
         for row, category in enumerate(categories):
             name = QLabel(CATEGORY_SHORT[category])
