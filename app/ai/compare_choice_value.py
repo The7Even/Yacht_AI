@@ -210,10 +210,10 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None, work
     if samples <= 0 or rollouts <= 0:
         raise ValueError("samples and rollouts must be positive")
 
-    # A user-supplied output is still respected for compatibility. Otherwise
-    # every experiment gets one human-readable timestamped directory.
+    # Windows does not allow ':' in directory names, so keep the requested
+    # human-readable MM.DD HH:MM form while replacing only ':' with '_'.
     if output is None:
-        timestamp = datetime.now().strftime("%m.%d %H:%M")
+        timestamp = datetime.now().strftime("%m.%d %H_%M")
         run_dir = Path("logs") / f"choice_value_{timestamp}"
     else:
         run_dir = output
