@@ -92,24 +92,32 @@ def _finish_game(engine: GameEngine, strategy: ExpectedValueStrategy) -> tuple[i
 
 def _paired_branch(template: GameEngine, first_category: Category, seed: int, strategy: ExpectedValueStrategy) -> tuple[int, int]:
     branch = copy.deepcopy(template)
-    branch.dice_roller = DiceRoller(random.Random(seed))
+    # GameEngine.roll_dice() reads the private _dice_roller field. The previous
+    # version accidentally assigned a new public `dice_roller` attribute, so
+    # every rollout kept using the copied RNG state and produced identical
+    # results. Inject the seeded roller into the field the engine actually uses.
+    branch._dice_roller = DiceRoller(random.Random(seed))
     _score_first_turn(branch, first_category)
     return _finish_game(branch, strategy)
 
 
-def _print_progress(done: int, total: int, samples: int, rollouts: int, *, force: bool = False) -> None:
+def _print_progress(done: int, total: int, samples: int, rollouts: int) -> None:
     """Print one in-place progress line, including the current sample/rollout."""
     pct = done / total * 100 if total else 100.0
     width = 40
     filled = int(width * pct / 100)
     bar = "#" * filled + "." * (width - filled)
-    current_sample = min(samples, done // max(1, rollouts) + (1 if done % max(1, rollouts) else 0))
-    current_rollout = done % max(1, rollouts)
-    if current_rollout == 0 and done:
+    current_sample = min(samples, done // max(1, rollouts * 2) + (1 if done % max(1, rollouts * 2) else 0))
+    branch_in_pair = done % 2
+    current_rollout = ((done // 2) % max(1, rollouts)) + (1 if done < total else 0)
+    if done == total:
+        current_sample = samples
         current_rollout = rollouts
+        branch_in_pair = 0
+    branch_name = "Choice" if branch_in_pair == 1 else "Other"
     text = (
         f"\rChoice Value [{bar}] {pct:6.2f}% | {done}/{total} branches "
-        f"| sample {current_sample}/{samples} | rollout {current_rollout}/{rollouts}"
+        f"| sample {current_sample}/{samples} | rollout {current_rollout}/{rollouts} | {branch_name}"
     )
     print(text, end="", flush=True)
 
@@ -124,7 +132,7 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
 
     rng = random.Random(seed)
     strategy = ExpectedValueStrategy()
-    total = samples * rollouts * 2  # Choice branch + Other branch for every paired rollout.
+    total = samples * rollouts * 2
     done = 0
 
     print(
