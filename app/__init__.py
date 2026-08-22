@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import csv
+import logging
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -50,6 +52,24 @@ def log_console_event(message: str, *, level: str = "DEBUG") -> None:
             row["reasoning"] = match.group(1)
         break
     _write_csv(**row)
+
+
+class _ConsoleCsvHandler(logging.Handler):
+    """Preserve the existing console output while writing the same event to CSV."""
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        print(f"[{record.levelname}] {message}", file=sys.stdout, flush=True)
+        try:
+            log_console_event(message, level=record.levelname)
+        except Exception:
+            pass
+
+
+_gui_logger = logging.getLogger("yacht.gui")
+if not any(isinstance(handler, _ConsoleCsvHandler) for handler in _gui_logger.handlers):
+    _gui_logger.addHandler(_ConsoleCsvHandler(level=logging.DEBUG))
+    _gui_logger.setLevel(logging.DEBUG)
+    _gui_logger.propagate = False
 
 
 def get_session_csv_path() -> Path:
