@@ -61,13 +61,22 @@ class GameEngine:
         self.state.held_indices = self.state.held_indices - {index}
 
     def get_available_categories(self) -> tuple[Category, ...]:
-        """Return unused categories for the participant whose turn is active."""
+        """Return unused categories for the active participant.
+
+        After the game ends this becomes a read-only query returning no
+        categories, so the GUI can safely render the final state without
+        accidentally treating the query as a player action.
+        """
+        if self.state.game_over:
+            return ()
         self._require_active_game()
         used = self.state.players[self.state.current_player].used_categories
         return tuple(category for category in ALL_CATEGORIES if category not in used)
 
     def get_current_scores(self) -> dict[Category, int]:
         """Return potential scores in every currently available category."""
+        if self.state.game_over:
+            return {}
         self._require_turn_with_dice()
         return {
             category: ScoreCalculator.calculate(category, self.state.current_dice)
