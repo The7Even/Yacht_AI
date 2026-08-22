@@ -1,18 +1,30 @@
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Iterable
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication, QFrame, QGridLayout, QHBoxLayout, QLabel, QMainWindow,
+    QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+)
 
-from .ai.expected_value_strategy import ExpectedValueStrategy
 from .ai.action_generator import ActionType
+from .ai.expected_value_strategy import ExpectedValueStrategy
 from .core.categories import ALL_CATEGORIES, Category
 from .core.game_engine import MAX_ROLLS_PER_TURN, GameEngine
 from .core.game_state import PlayerId
+
+LOGGER = logging.getLogger("yacht.gui")
+if not LOGGER.handlers:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("[%(levelname)s] %(message)s"))
+    LOGGER.addHandler(handler)
+    LOGGER.setLevel(logging.DEBUG)
+    LOGGER.propagate = False
 
 APP_STYLE = """
 QMainWindow, QWidget { background: #0b1424; color: #e8edf7; }
@@ -47,12 +59,18 @@ QPushButton#die:hover { border-color: #8da1ba; }
 QPushButton#die[held="true"] { border: 4px solid #2e8cff; background: #e9f2ff; }
 QLabel#rollRemaining { background: #1d4f8f; border: 1px solid #3d83db; border-radius: 15px; padding: 5px 12px; color: #dcebff; font-size: 12px; font-weight: 800; }
 QLabel#status { background: #0e1929; border: 1px solid #20324b; border-radius: 8px; padding: 10px; color: #b8c5d7; }
-QLabel#log { color: #b5c2d3; font-size: 12px; }
 QLabel#aiStatus { background: #0e1929; border: 1px solid #20324b; border-radius: 8px; padding: 12px; color: #d4deeb; font-size: 12px; }
+QPlainTextEdit#logView { background: #0e1929; border: 1px solid #20324b; border-radius: 8px; padding: 8px; color: #b5c2d3; font-size: 11px; }
 QFrame#scoreRow { background: #0e1929; border: 1px solid #1f3048; border-radius: 6px; }
 """
 
-CATEGORY_SHORT = {Category.ONES: "Ones", Category.TWOS: "Twos", Category.THREES: "Threes", Category.FOURS: "Fours", Category.FIVES: "Fives", Category.SIXES: "Sixes", Category.CHOICE: "Choice", Category.FOUR_OF_A_KIND: "4 of a Kind", Category.FULL_HOUSE: "Full House", Category.SMALL_STRAIGHT: "Small Straight", Category.LARGE_STRAIGHT: "Large Straight", Category.YACHT: "Yacht"}
+CATEGORY_SHORT = {
+    Category.ONES: "Ones", Category.TWOS: "Twos", Category.THREES: "Threes",
+    Category.FOURS: "Fours", Category.FIVES: "Fives", Category.SIXES: "Sixes",
+    Category.CHOICE: "Choice", Category.FOUR_OF_A_KIND: "4 of a Kind",
+    Category.FULL_HOUSE: "Full House", Category.SMALL_STRAIGHT: "Small Straight",
+    Category.LARGE_STRAIGHT: "Large Straight", Category.YACHT: "Yacht",
+}
 UPPER_CATEGORIES = (Category.ONES, Category.TWOS, Category.THREES, Category.FOURS, Category.FIVES, Category.SIXES)
 SPECIAL_CATEGORIES = tuple(c for c in ALL_CATEGORIES if c not in UPPER_CATEGORIES)
 
@@ -65,13 +83,13 @@ class YachtWindow(QMainWindow):
         self.ai_active = False
         self.ai_waiting_for_roll = False
         self.ai_status_label = None
+        self.log_view = None
         self.ai_timer = QTimer(self)
         self.ai_timer.setSingleShot(True)
         self.ai_timer.timeout.connect(self._run_ai_decision)
         self.die_buttons: list[QPushButton] = []
         self.category_buttons: dict[Category, QPushButton] = {}
         self.score_labels: dict[tuple[PlayerId, Category], QLabel] = {}
-        self.log_label = None
         self.status_label = None
         self.roll_label = None
         self.turn_label = None
@@ -91,40 +109,74 @@ class YachtWindow(QMainWindow):
         self._build_ui()
         self.start_new_game()
 
+    @staticmethod
+    def _dice_text(dice: Iterable[int] | None) -> str:
+        return "-" if dice is None else "[" + ", ".join(map(str, dice)) + "]"
+
+    @staticmethod
+    def _held_text(indices: Iterable[int]) -> str:
+        values = tuple(sorted(indices))
+        return "없음" if not values else ", ".join(str(i + 1) for i in values)
+
+    def _console(self, message: str, level: int = logging.DEBUG) -> None:
+        LOGGER.log(level, message)
+
+    def _append_log(self, message: str) -> None:
+        if self.log_view is not None:
+            self.log_view.appendPlainText(message)
+            self.log_view.ensureCursorVisible()
+
+    def _event(self, message: str, level: int = logging.INFO) -> None:
+        self._console(message, level)
+        self._append_log(message)
+
     def _load_dice_icons(self) -> dict[int, QIcon]:
         icons: dict[int, QIcon] = {}
         asset_dir = Path(__file__).resolve().parent / "assets" / "dice"
         for value in range(1, 7):
             path = asset_dir / f"dice_{value}.svg"
-            if path.exists(): icons[value] = QIcon(str(path))
+            if path.exists():
+                icons[value] = QIcon(str(path))
         return icons
 
     def _load_category_icons(self) -> dict[Category, QIcon]:
         icons: dict[Category, QIcon] = {}
         asset_dir = Path(__file__).resolve().parent / "assets" / "categories"
-        names = {Category.CHOICE: "choice", Category.FOUR_OF_A_KIND: "four_of_a_kind", Category.FULL_HOUSE: "full_house", Category.SMALL_STRAIGHT: "small_straight", Category.LARGE_STRAIGHT: "large_straight", Category.YACHT: "yacht"}
+        names = {
+            Category.CHOICE: "choice", Category.FOUR_OF_A_KIND: "four_of_a_kind",
+            Category.FULL_HOUSE: "full_house", Category.SMALL_STRAIGHT: "small_straight",
+            Category.LARGE_STRAIGHT: "large_straight", Category.YACHT: "yacht",
+        }
         for category, name in names.items():
             path = asset_dir / f"{name}.svg"
-            if path.exists(): icons[category] = QIcon(str(path))
+            if path.exists():
+                icons[category] = QIcon(str(path))
         return icons
 
     def _build_ui(self) -> None:
-        self.setWindowTitle("Yacht Game Prototype")
+        self.setWindowTitle("Yacht Game Prototype v0.6")
         self.resize(1360, 900)
         self.setMinimumSize(1100, 760)
         self.setStyleSheet(APP_STYLE)
         root = QWidget(); self.setCentralWidget(root)
         main = QVBoxLayout(root); main.setContentsMargins(18, 16, 18, 12); main.setSpacing(10)
-        header = QHBoxLayout(); new_game = QPushButton("＋  새 게임"); new_game.setObjectName("newGame"); new_game.clicked.connect(self.start_new_game); header.addWidget(new_game); header.addStretch(); title = QLabel("⚓  YACHT  ⚓"); title.setObjectName("title"); header.addWidget(title); header.addStretch(); rules = QPushButton("⚙  규칙"); rules.clicked.connect(self.show_rules); header.addWidget(rules); main.addLayout(header)
-        players = QHBoxLayout(); players.setSpacing(10); players.addWidget(self._player_header("PLAYER", "player")); players.addWidget(self._build_center_summary(), 0); players.addWidget(self._player_header("AI (FastEV)", "ai")); main.addLayout(players)
-        body = QHBoxLayout(); body.setSpacing(10); body.addWidget(self._build_scorecard(), 5); body.addWidget(self._build_play_area(), 14); body.addWidget(self._build_ai_panel(), 5); main.addLayout(body, 1)
-        footer = QHBoxLayout(); footer.addWidget(QLabel("Yacht Game Prototype v0.5")); tip = QLabel("💡 주사위를 클릭하면 HOLD할 수 있습니다."); tip.setObjectName("muted"); footer.addStretch(); footer.addWidget(tip); footer.addStretch(); footer.addWidget(QLabel("사운드: ON")); main.addLayout(footer)
+        header = QHBoxLayout()
+        new_game = QPushButton("＋  새 게임"); new_game.setObjectName("newGame"); new_game.clicked.connect(self.start_new_game); header.addWidget(new_game)
+        header.addStretch(); title = QLabel("⚓  YACHT  ⚓"); title.setObjectName("title"); header.addWidget(title); header.addStretch()
+        rules = QPushButton("⚙  규칙"); rules.clicked.connect(self.show_rules); header.addWidget(rules); main.addLayout(header)
+        players = QHBoxLayout(); players.setSpacing(10)
+        players.addWidget(self._player_header("PLAYER", "player")); players.addWidget(self._build_center_summary(), 0); players.addWidget(self._player_header("AI (FastEV)", "ai")); main.addLayout(players)
+        body = QHBoxLayout(); body.setSpacing(10)
+        body.addWidget(self._build_scorecard(), 5); body.addWidget(self._build_play_area(), 14); body.addWidget(self._build_ai_panel(), 5); main.addLayout(body, 1)
+        footer = QHBoxLayout(); footer.addWidget(QLabel("Yacht Game Prototype v0.6")); tip = QLabel("💡 주사위를 클릭하면 HOLD할 수 있습니다."); tip.setObjectName("muted")
+        footer.addStretch(); footer.addWidget(tip); footer.addStretch(); footer.addWidget(QLabel("사운드: ON")); main.addLayout(footer)
 
     def _player_header(self, name: str, side: str) -> QFrame:
         frame = QFrame(); frame.setObjectName("playerCard" if side == "player" else "aiCard")
         layout = QHBoxLayout(frame); layout.setContentsMargins(14, 10, 14, 10); layout.addWidget(QLabel("👤" if side == "player" else "🤖"))
-        name_label = QLabel(name); name_label.setStyleSheet("font-size:18px;font-weight:800;color:#64a9ff;background:transparent;" if side == "player" else "font-size:18px;font-weight:800;color:#ff7f91;background:transparent;")
-        total = QLabel("0"); total.setObjectName("score"); total.setStyleSheet("color:#64a9ff;background:transparent;" if side == "player" else "color:#ff7f91;background:transparent;")
+        color = "#64a9ff" if side == "player" else "#ff7f91"
+        name_label = QLabel(name); name_label.setStyleSheet(f"font-size:18px;font-weight:800;color:{color};background:transparent;")
+        total = QLabel("0"); total.setObjectName("score"); total.setStyleSheet(f"color:{color};background:transparent;")
         if side == "player": self.player_total = total
         else: self.ai_total = total
         layout.addWidget(name_label); layout.addStretch(); layout.addWidget(QLabel("총점")); layout.addWidget(total)
@@ -144,15 +196,24 @@ class YachtWindow(QMainWindow):
 
     def _build_scorecard(self) -> QFrame:
         card = QFrame(); card.setObjectName("card"); layout = QVBoxLayout(card); layout.setContentsMargins(7, 2, 7, 6); layout.setSpacing(3)
-        header = QGridLayout(); header.setContentsMargins(5, 0, 5, 0); header.setHorizontalSpacing(4); title = QLabel("점수판"); title.setObjectName("scorecardTitle"); ph = QLabel("PLAYER"); ph.setObjectName("playerHeader"); ph.setAlignment(Qt.AlignmentFlag.AlignCenter); ah = QLabel("AI"); ah.setObjectName("aiHeader"); ah.setAlignment(Qt.AlignmentFlag.AlignCenter); header.addWidget(title, 0, 0); header.addWidget(ph, 0, 1); header.addWidget(ah, 0, 2); self._configure_score_columns(header); layout.addLayout(header); layout.addWidget(self._score_section("기본 점수", UPPER_CATEGORIES))
-        upper_summary = QFrame(); upper_summary.setObjectName("scoreRow"); summary = QGridLayout(upper_summary); summary.setContentsMargins(5, 3, 5, 3); summary.setHorizontalSpacing(4); summary.setVerticalSpacing(3); summary.addWidget(QLabel("상단 합계"), 0, 0)
-        self.player_upper_label = QLabel("0 / 63"); self.player_upper_label.setObjectName("playerCell"); self.player_upper_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_upper_label = QLabel("0 / 63"); self.ai_upper_label.setObjectName("aiCell"); self.ai_upper_label.setAlignment(Qt.AlignmentFlag.AlignCenter); summary.addWidget(self.player_upper_label, 0, 1); summary.addWidget(self.ai_upper_label, 0, 2); summary.addWidget(QLabel("보너스"), 1, 0)
-        self.player_bonus_summary = QLabel("-"); self.player_bonus_summary.setObjectName("playerCell"); self.player_bonus_summary.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_bonus_summary = QLabel("-"); self.ai_bonus_summary.setObjectName("aiCell"); self.ai_bonus_summary.setAlignment(Qt.AlignmentFlag.AlignCenter); summary.addWidget(self.player_bonus_summary, 1, 1); summary.addWidget(self.ai_bonus_summary, 1, 2); self._configure_score_columns(summary); layout.addWidget(upper_summary); layout.addWidget(self._score_section("특수 족보", SPECIAL_CATEGORIES))
-        total_row = QFrame(); total_row.setObjectName("scoreRow"); total = QGridLayout(total_row); total.setContentsMargins(5, 3, 5, 3); total.setHorizontalSpacing(4); total.addWidget(QLabel("총합"), 0, 0); self.player_table_total = QLabel("0"); self.player_table_total.setObjectName("playerCell"); self.player_table_total.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_table_total = QLabel("0"); self.ai_table_total.setObjectName("aiCell"); self.ai_table_total.setAlignment(Qt.AlignmentFlag.AlignCenter); total.addWidget(self.player_table_total, 0, 1); total.addWidget(self.ai_table_total, 0, 2); self._configure_score_columns(total); layout.addWidget(total_row)
+        header = QGridLayout(); header.setContentsMargins(5, 0, 5, 0); header.setHorizontalSpacing(4)
+        title = QLabel("점수판"); title.setObjectName("scorecardTitle"); ph = QLabel("PLAYER"); ph.setObjectName("playerHeader"); ph.setAlignment(Qt.AlignmentFlag.AlignCenter); ah = QLabel("AI"); ah.setObjectName("aiHeader"); ah.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header.addWidget(title, 0, 0); header.addWidget(ph, 0, 1); header.addWidget(ah, 0, 2); self._configure_score_columns(header); layout.addLayout(header)
+        layout.addWidget(self._score_section("기본 점수", UPPER_CATEGORIES))
+        upper_summary = QFrame(); upper_summary.setObjectName("scoreRow"); summary = QGridLayout(upper_summary); summary.setContentsMargins(5, 3, 5, 3); summary.setHorizontalSpacing(4); summary.setVerticalSpacing(3)
+        summary.addWidget(QLabel("상단 합계"), 0, 0); self.player_upper_label = QLabel("0 / 63"); self.player_upper_label.setObjectName("playerCell"); self.player_upper_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_upper_label = QLabel("0 / 63"); self.ai_upper_label.setObjectName("aiCell"); self.ai_upper_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        summary.addWidget(self.player_upper_label, 0, 1); summary.addWidget(self.ai_upper_label, 0, 2); summary.addWidget(QLabel("보너스"), 1, 0)
+        self.player_bonus_summary = QLabel("-"); self.player_bonus_summary.setObjectName("playerCell"); self.player_bonus_summary.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_bonus_summary = QLabel("-"); self.ai_bonus_summary.setObjectName("aiCell"); self.ai_bonus_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        summary.addWidget(self.player_bonus_summary, 1, 1); summary.addWidget(self.ai_bonus_summary, 1, 2); self._configure_score_columns(summary); layout.addWidget(upper_summary)
+        layout.addWidget(self._score_section("특수 족보", SPECIAL_CATEGORIES))
+        total_row = QFrame(); total_row.setObjectName("scoreRow"); total = QGridLayout(total_row); total.setContentsMargins(5, 3, 5, 3); total.setHorizontalSpacing(4); total.addWidget(QLabel("총합"), 0, 0)
+        self.player_table_total = QLabel("0"); self.player_table_total.setObjectName("playerCell"); self.player_table_total.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_table_total = QLabel("0"); self.ai_table_total.setObjectName("aiCell"); self.ai_table_total.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        total.addWidget(self.player_table_total, 0, 1); total.addWidget(self.ai_table_total, 0, 2); self._configure_score_columns(total); layout.addWidget(total_row)
         return card
 
     def _score_section(self, title: str, categories: Iterable[Category]) -> QFrame:
-        wrap = QFrame(); layout = QVBoxLayout(wrap); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(1); subsection = QLabel(title); subsection.setObjectName("subsection"); layout.addWidget(subsection); grid = QGridLayout(); grid.setContentsMargins(5, 0, 5, 0); grid.setHorizontalSpacing(4); grid.setVerticalSpacing(3); self._configure_score_columns(grid)
+        wrap = QFrame(); layout = QVBoxLayout(wrap); layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(1)
+        subsection = QLabel(title); subsection.setObjectName("subsection"); layout.addWidget(subsection); grid = QGridLayout(); grid.setContentsMargins(5, 0, 5, 0); grid.setHorizontalSpacing(4); grid.setVerticalSpacing(3); self._configure_score_columns(grid)
         for row, category in enumerate(categories):
             name = QLabel(CATEGORY_SHORT[category]); name.setStyleSheet("font-size:13px;"); grid.addWidget(name, row, 0)
             for column, player in ((1, PlayerId.PLAYER), (2, PlayerId.AI)):
@@ -181,51 +242,85 @@ class YachtWindow(QMainWindow):
         layout.addLayout(special_grid); return card
 
     def _build_ai_panel(self) -> QFrame:
-        outer = QFrame(); outer.setObjectName("card"); layout = QVBoxLayout(outer); layout.setContentsMargins(10, 9, 10, 9); title = QLabel("AI 진행 상황"); title.setObjectName("section"); layout.addWidget(title)
+        outer = QFrame(); outer.setObjectName("card"); layout = QVBoxLayout(outer); layout.setContentsMargins(10, 9, 10, 9); layout.setSpacing(5)
+        title = QLabel("AI 진행 상황"); title.setObjectName("section"); layout.addWidget(title)
         self.ai_status_label = QLabel("AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\nPLAYER 턴을 기다리는 중입니다."); self.ai_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter); self.ai_status_label.setObjectName("aiStatus"); self.ai_status_label.setWordWrap(True); layout.addWidget(self.ai_status_label, 1)
-        log_title = QLabel("게임 로그"); log_title.setObjectName("section"); layout.addWidget(log_title); self.log_label = QLabel("게임이 시작되었습니다.\nPLAYER 턴입니다."); self.log_label.setObjectName("log"); self.log_label.setWordWrap(True); layout.addWidget(self.log_label); return outer
+        log_title = QLabel("게임 로그"); log_title.setObjectName("section"); layout.addWidget(log_title)
+        self.log_view = QPlainTextEdit(); self.log_view.setObjectName("logView"); self.log_view.setReadOnly(True); self.log_view.setMaximumBlockCount(300); layout.addWidget(self.log_view, 1)
+        return outer
+
+    def _decision_debug(self, decision) -> None:
+        action = decision.action
+        if action.type is ActionType.SCORE:
+            action_text = f"SCORE {CATEGORY_SHORT[action.selected_category]}"
+        else:
+            action_text = f"HOLD [{self._held_text(action.held_indices)}]"
+        alternatives = []
+        for candidate in decision.alternatives:
+            ca = candidate.action
+            if ca.type is ActionType.SCORE:
+                text = f"SCORE:{CATEGORY_SHORT[ca.selected_category]}"
+            else:
+                text = f"HOLD:[{self._held_text(ca.held_indices)}]"
+            alternatives.append(f"{text}={candidate.expected_value:.2f}")
+        self._console(f"AI DECISION action={action_text} EV={decision.expected_value:.2f} alternatives={' | '.join(alternatives)} reasoning={decision.reasoning}")
 
     def start_new_game(self) -> None:
-        self.ai_timer.stop(); self.ai_active = False; self.ai_waiting_for_roll = False; self.engine.start_game(); self._refresh(); self._set_status("0/3회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다."); self._set_ai_status("AI (FastEV)\n\nPLAYER 턴을 기다리는 중입니다.")
+        self.ai_timer.stop(); self.ai_active = False; self.ai_waiting_for_roll = False; self.engine.start_game(); self._refresh()
+        if self.log_view is not None: self.log_view.clear()
+        self._set_status("0/3회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다.", log=False)
+        self._set_ai_status("AI (FastEV)\n\nPLAYER 턴을 기다리는 중입니다.")
+        self._event("[GAME] 새 게임 시작 · PLAYER 턴", logging.INFO)
 
     def roll_dice(self) -> None:
         if self.ai_active: return
-        try: dice = self.engine.roll_dice()
-        except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); return
+        try:
+            dice = self.engine.roll_dice()
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc)); self._console(f"PLAYER ROLL ERROR: {exc}", logging.ERROR); return
         self._refresh(dice)
-        self._set_status("3/3회 굴렸습니다. 아래에서 기록할 점수 항목을 선택해 주세요." if self.engine.state.roll_count >= MAX_ROLLS_PER_TURN else f"{self.engine.state.roll_count}/{MAX_ROLLS_PER_TURN}회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다.")
+        roll_no = self.engine.state.roll_count
+        self._event(f"[PLAYER][TURN {self.engine.state.turn:02d}][ROLL {roll_no}/3] dice={self._dice_text(dice)} held=[{self._held_text(self.engine.state.held_indices)}]")
+        self._set_status("3/3회 굴렸습니다. 아래에서 기록할 점수 항목을 선택해 주세요." if roll_no >= MAX_ROLLS_PER_TURN else f"{roll_no}/{MAX_ROLLS_PER_TURN}회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다.", log=False)
 
     def toggle_hold(self, index: int) -> None:
         if self.ai_active or self.engine.state.current_dice is None: return
         try:
-            if index in self.engine.state.held_indices: self.engine.unhold_dice(index)
-            else: self.engine.hold_dice(index)
-        except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); return
-        self._refresh()
+            if index in self.engine.state.held_indices:
+                self.engine.unhold_dice(index); action = "UNHOLD"
+            else:
+                self.engine.hold_dice(index); action = "HOLD"
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc)); self._console(f"PLAYER {action if 'action' in locals() else 'HOLD'} ERROR index={index + 1}: {exc}", logging.ERROR); return
+        self._refresh(); self._event(f"[PLAYER][TURN {self.engine.state.turn:02d}][{action}] die={index + 1} held=[{self._held_text(self.engine.state.held_indices)}]")
 
     def score_category(self, category: Category) -> None:
         if self.ai_active: return
-        try: score = self.engine.score_category(category)
-        except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); return
-        self._refresh()
+        try:
+            score = self.engine.score_category(category)
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc)); self._console(f"PLAYER SCORE ERROR category={CATEGORY_SHORT[category]}: {exc}", logging.ERROR); return
+        self._refresh(); self._event(f"[PLAYER][TURN {self.engine.state.turn:02d}][SCORE] {CATEGORY_SHORT[category]}={score} total={self.engine.state.player_score}")
         if self.engine.is_game_over(): self._finish_game(score, category); return
-        try: self.engine.begin_ai_turn()
-        except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); return
-        self.ai_active = True; self.ai_waiting_for_roll = False; self._refresh(); self._set_status(f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. AI 턴을 시작합니다."); self._set_ai_status("AI (FastEV)\n\nAI 턴을 준비하고 있습니다...\n\n첫 번째 주사위를 굴립니다."); self.ai_timer.start(700)
+        try:
+            self.engine.begin_ai_turn()
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc)); self._console(f"BEGIN AI TURN ERROR: {exc}", logging.ERROR); return
+        self.ai_active = True; self.ai_waiting_for_roll = False; self._refresh(); self._set_status(f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. AI 턴을 시작합니다.", log=False); self._set_ai_status("AI (FastEV)\n\nAI 턴을 준비하고 있습니다...\n\n첫 번째 주사위를 굴립니다."); self._event(f"[TURN {self.engine.state.turn:02d}] AI 턴 시작")
+        self.ai_timer.start(700)
 
     def _ai_roll(self) -> None:
-        try: dice = self.engine.roll_dice()
+        try:
+            dice = self.engine.roll_dice()
         except (RuntimeError, ValueError) as exc:
-            self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n오류: {exc}"); self._finish_ai_turn(); return
+            self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n오류: {exc}"); self._console(f"AI ROLL ERROR turn={self.engine.state.turn}: {exc}", logging.ERROR); self._finish_ai_turn(); return
         self._refresh(dice)
-        roll_no = self.engine.state.roll_count
-        remaining = MAX_ROLLS_PER_TURN - roll_no
+        roll_no = self.engine.state.roll_count; remaining = MAX_ROLLS_PER_TURN - roll_no
+        self._event(f"[AI][TURN {self.engine.state.turn:02d}][ROLL {roll_no}/3] dice={self._dice_text(dice)} held=[{self._held_text(self.engine.state.held_indices)}]")
         if roll_no >= MAX_ROLLS_PER_TURN:
-            self._set_status(f"AI가 {roll_no}/3회 주사위를 굴렸습니다. 마지막 조합을 분석합니다.")
-            self._set_ai_status(f"AI (FastEV)\n\n{roll_no}/3회 굴림 완료\n\n마지막 주사위 조합을 분석하고 기록할 항목을 결정합니다...")
+            self._set_status(f"AI가 {roll_no}/3회 주사위를 굴렸습니다. 마지막 조합을 분석합니다.", log=False); self._set_ai_status(f"AI (FastEV)\n\n{roll_no}/3회 굴림 완료\n\n마지막 주사위 조합을 분석하고 기록할 항목을 결정합니다...")
         else:
-            self._set_status(f"AI가 {roll_no}/3회 주사위를 굴렸습니다.")
-            self._set_ai_status(f"AI (FastEV)\n\n{roll_no}/3회 굴림 완료\n남은 굴림: {remaining}회\n\n주사위 조합을 분석하는 중입니다...")
+            self._set_status(f"AI가 {roll_no}/3회 주사위를 굴렸습니다.", log=False); self._set_ai_status(f"AI (FastEV)\n\n{roll_no}/3회 굴림 완료\n남은 굴림: {remaining}회\n\n주사위 조합을 분석하는 중입니다...")
         self.ai_timer.start(950)
 
     def _run_ai_decision(self) -> None:
@@ -234,45 +329,46 @@ class YachtWindow(QMainWindow):
         if state.current_player is not PlayerId.AI or state.turn_scored:
             self._finish_ai_turn(); return
         if self.ai_waiting_for_roll:
-            self.ai_waiting_for_roll = False
-            self._ai_roll()
-            return
+            self.ai_waiting_for_roll = False; self._ai_roll(); return
         if state.current_dice is None:
-            self._ai_roll()
-            return
-        try: decision = self.ai_strategy.decide(state)
+            self._ai_roll(); return
+        try:
+            decision = self.ai_strategy.decide(state)
         except (RuntimeError, ValueError) as exc:
-            self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n분석 오류: {exc}"); self._finish_ai_turn(); return
-        self.engine.last_ai_action = decision.action; self.engine.last_ai_reasoning = decision.reasoning
+            self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n분석 오류: {exc}"); self._console(f"AI DECISION ERROR turn={state.turn}: {exc}", logging.ERROR); self._finish_ai_turn(); return
+        self.engine.last_ai_action = decision.action; self.engine.last_ai_reasoning = decision.reasoning; self._decision_debug(decision)
         if decision.action.type is ActionType.SCORE:
-            category = decision.action.selected_category; assert category is not None; score = self.engine.score_category(category); self._refresh(); self._set_status(f"AI가 {CATEGORY_SHORT[category]}을(를) 선택해 {score}점을 기록합니다."); self._set_ai_status(f"AI (FastEV)\n\n기록 선택\n{CATEGORY_SHORT[category]} · {score}점\n\n{decision.reasoning}"); self.ai_timer.start(1100); return
+            category = decision.action.selected_category; assert category is not None
+            score = self.engine.score_category(category); self._refresh(); self._event(f"[AI][TURN {state.turn:02d}][SCORE] {CATEGORY_SHORT[category]}={score} total={self.engine.state.ai_score}")
+            self._set_status(f"AI가 {CATEGORY_SHORT[category]}을(를) 선택해 {score}점을 기록합니다.", log=False); self._set_ai_status(f"AI (FastEV)\n\n기록 선택\n{CATEGORY_SHORT[category]} · {score}점\n\n{decision.reasoning}"); self.ai_timer.start(1100); return
         desired = frozenset(decision.action.held_indices); current = self.engine.state.held_indices
         for index in sorted(current - desired): self.engine.unhold_dice(index)
         for index in sorted(desired - current): self.engine.hold_dice(index)
-        self._refresh(); held_text = ", ".join(str(i + 1) for i in sorted(desired)) if desired else "없음"
+        self._refresh(); held_text = self._held_text(desired)
+        self._event(f"[AI][TURN {state.turn:02d}][DECISION] roll={state.roll_count}/3 hold=[{held_text}] EV={decision.expected_value:.2f} reasoning={decision.reasoning}")
         if state.roll_count >= MAX_ROLLS_PER_TURN:
-            self._set_status("AI의 마지막 굴림이 완료되었습니다. 기록할 점수를 결정합니다.")
-            self._set_ai_status(f"AI (FastEV)\n\n최종 조합 분석\nHOLD: {held_text}\n\n{decision.reasoning}")
-            self.ai_timer.start(500)
+            self._set_status("AI의 마지막 굴림이 완료되었습니다. 기록할 점수를 결정합니다.", log=False); self._set_ai_status(f"AI (FastEV)\n\n최종 조합 분석\nHOLD: {held_text}\n\n{decision.reasoning}"); self.ai_timer.start(500)
         else:
-            self._set_status(f"AI가 {len(desired)}개 주사위를 HOLD했습니다. 다음 굴림을 준비합니다.")
-            self._set_ai_status(f"AI (FastEV)\n\n{state.roll_count}/3회 굴림\nHOLD: {held_text}\n남은 굴림: {MAX_ROLLS_PER_TURN - state.roll_count}회\n\n{decision.reasoning}")
-            self.ai_waiting_for_roll = True
-            self.ai_timer.start(900)
+            self._set_status(f"AI가 {len(desired)}개 주사위를 HOLD했습니다. 다음 굴림을 준비합니다.", log=False); self._set_ai_status(f"AI (FastEV)\n\n{state.roll_count}/3회 굴림\nHOLD: {held_text}\n남은 굴림: {MAX_ROLLS_PER_TURN - state.roll_count}회\n\n{decision.reasoning}"); self.ai_waiting_for_roll = True; self.ai_timer.start(900)
 
     def _finish_ai_turn(self) -> None:
         if not self.ai_active: return
         if self.engine.state.turn_scored:
-            try: self.engine.finish_ai_turn()
-            except (RuntimeError, ValueError) as exc: self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n턴 종료 오류: {exc}"); self.ai_active = False; return
+            try:
+                self.engine.finish_ai_turn()
+            except (RuntimeError, ValueError) as exc:
+                self._set_status(str(exc)); self._set_ai_status(f"AI (FastEV)\n\n턴 종료 오류: {exc}"); self._console(f"FINISH AI TURN ERROR: {exc}", logging.ERROR); self.ai_active = False; return
         self.ai_active = False; self.ai_waiting_for_roll = False; self._refresh()
         if self.engine.is_game_over(): self._show_final_result(); return
-        self._set_status(f"AI 턴이 끝났습니다. 다음은 PLAYER {self.engine.state.turn}턴입니다."); self._set_ai_status("AI (FastEV)\n\nAI 턴 완료\n\nPLAYER의 다음 턴을 기다리는 중입니다.")
+        self._event(f"[TURN {self.engine.state.turn:02d}] AI 턴 종료 · PLAYER 턴 시작")
+        self._set_status(f"AI 턴이 끝났습니다. 다음은 PLAYER {self.engine.state.turn}턴입니다.", log=False); self._set_ai_status("AI (FastEV)\n\nAI 턴 완료\n\nPLAYER의 다음 턴을 기다리는 중입니다.")
 
     def _finish_game(self, score: int, category: Category) -> None:
-        self._set_status(f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. 게임이 종료되었습니다."); self._set_ai_status("AI (FastEV)\n\n게임 종료\n\n모든 카테고리가 사용되었습니다."); self._show_final_result()
+        self._event(f"[GAME OVER] 마지막 기록 {CATEGORY_SHORT[category]}={score} · PLAYER={self.engine.state.player_score} AI={self.engine.state.ai_score}", logging.INFO)
+        self._set_status(f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. 게임이 종료되었습니다.", log=False); self._set_ai_status("AI (FastEV)\n\n게임 종료\n\n모든 카테고리가 사용되었습니다."); self._show_final_result()
 
     def _show_final_result(self) -> None:
+        self._console(f"FINAL RESULT player={self.engine.state.player_score} ai={self.engine.state.ai_score}", logging.INFO)
         QMessageBox.information(self, "게임 종료", f"12턴이 모두 완료되었습니다.\nPLAYER {self.engine.state.player_score}점\nAI {self.engine.state.ai_score}점")
 
     def _refresh(self, dice: Iterable[int] | None = None) -> None:
@@ -294,11 +390,12 @@ class YachtWindow(QMainWindow):
         self.player_total.setText(str(state.player_score)); self.ai_total.setText(str(state.ai_score)); self.center_total_label.setText(f"{state.player_score} : {state.ai_score}")
         diff = state.player_score - state.ai_score
         gap_text, gap_object = ((f"점수 차이 {diff}점 · PLAYER 우세", "scoreGap") if diff > 0 else (f"점수 차이 {abs(diff)}점 · AI 우세", "scoreGapNegative") if diff < 0 else ("점수 차이 0점 · 동점", "scoreGap"))
-        self.gap_label.setText(gap_text); self.gap_label.setObjectName(gap_object); self.gap_label.style().unpolish(self.gap_label); self.gap_label.style().polish(self.gap_label); self.player_upper_label.setText(f"{state.player_upper_total} / 63"); self.ai_upper_label.setText(f"{state.ai_upper_total} / 63"); self.player_bonus_summary.setText("획득 (+35)" if state.player_has_bonus else "-"); self.ai_bonus_summary.setText("획득 (+35)" if state.ai_has_bonus else "-"); self.player_table_total.setText(str(state.player_score)); self.ai_table_total.setText(str(state.ai_score)); self.turn_label.setText(f"턴 {min(12, state.turn)} / 12")
+        self.gap_label.setText(gap_text); self.gap_label.setObjectName(gap_object); self.gap_label.style().unpolish(self.gap_label); self.gap_label.style().polish(self.gap_label)
+        self.player_upper_label.setText(f"{state.player_upper_total} / 63"); self.ai_upper_label.setText(f"{state.ai_upper_total} / 63"); self.player_bonus_summary.setText("획득 (+35)" if state.player_has_bonus else "-"); self.ai_bonus_summary.setText("획득 (+35)" if state.ai_has_bonus else "-"); self.player_table_total.setText(str(state.player_score)); self.ai_table_total.setText(str(state.ai_score)); self.turn_label.setText(f"턴 {min(12, state.turn)} / 12")
 
-    def _set_status(self, text: str) -> None:
+    def _set_status(self, text: str, log: bool = True) -> None:
         if self.status_label: self.status_label.setText(text)
-        if self.log_label: self.log_label.setText(text)
+        if log: self._append_log(f"[UI] {text}")
 
     def _set_ai_status(self, text: str) -> None:
         if self.ai_status_label: self.ai_status_label.setText(text)
