@@ -17,7 +17,6 @@ large experiments can use multiple CPU cores.
 from __future__ import annotations
 
 import argparse
-import copy
 import csv
 import json
 import os
@@ -76,6 +75,17 @@ def _play_turn_to_score(engine: GameEngine, strategy: ExpectedValueStrategy) -> 
         engine.roll_dice()
 
 
+def _new_first_turn_engine(first_dice: tuple[int, ...], seed: int) -> GameEngine:
+    """Recreate the tiny pre-score state without pickling/deep-copying GameEngine."""
+    engine = GameEngine(dice_roller=DiceRoller(random.Random(seed)))
+    engine.start_game()
+    # The branch starts from a completed first-turn roll. The exact roll count
+    # no longer matters because score_category only requires a current hand.
+    engine.state.current_dice = tuple(first_dice)
+    engine.state.roll_count = 1
+    return engine
+
+
 def _score_first_turn(engine: GameEngine, category: Category) -> None:
     engine.score_category(category)
     if not engine.is_game_over():
@@ -107,26 +117,25 @@ def _finish_game(engine: GameEngine, strategy: ExpectedValueStrategy) -> tuple[i
     )
 
 
-def _paired_branch(template: GameEngine, first_category: Category, seed: int, strategy: ExpectedValueStrategy) -> tuple[int, int]:
-    branch = copy.deepcopy(template)
-    branch._dice_roller = DiceRoller(random.Random(seed))
+def _paired_branch(
+    first_dice: tuple[int, ...], first_category: Category, seed: int, strategy: ExpectedValueStrategy
+) -> tuple[int, int]:
+    """Run one branch from a compact first-turn snapshot."""
+    branch = _new_first_turn_engine(first_dice, seed)
     _score_first_turn(branch, first_category)
     return _finish_game(branch, strategy)
 
 
-def _simulate_sample(payload: tuple[int, GameEngine, tuple[int, ...], Category, int, int, int]) -> list[dict[str, object]]:
-    sample, template, first_dice, baseline_category, choice_score, best_other_score, seed = payload
+def _simulate_sample(payload: tuple[int, tuple[int, ...], Category, int, int, int, int]) -> list[dict[str, object]]:
+    sample, first_dice, baseline_category, choice_score, best_other_score, seed, best_other_index = payload
     strategy = _worker_strategy()
-    best_other = max(
-        (category for category in ALL_CATEGORIES if category is not Category.CHOICE),
-        key=lambda category: ScoreCalculator.calculate(category, first_dice),
-    )
+    best_other = ALL_CATEGORIES[best_other_index]
     rollout_rng = random.Random(seed)
     rows: list[dict[str, object]] = []
     for rollout in range(1, _WORKER_ROLLOUTS + 1):
         branch_seed = rollout_rng.randrange(2**63)
-        choice_result = _paired_branch(template, Category.CHOICE, branch_seed, strategy)
-        other_result = _paired_branch(template, best_other, branch_seed, strategy)
+        choice_result = _paired_branch(first_dice, Category.CHOICE, branch_seed, strategy)
+        other_result = _paired_branch(first_dice, best_other, branch_seed, strategy)
         choice_total = choice_result[0] + choice_result[1]
         other_total = other_result[0] + other_result[1]
         delta = choice_total - other_total
@@ -162,6 +171,12 @@ def _print_progress(done_branches: int, total_branches: int, samples: int, rollo
     print(text, end="", flush=True)
 
 
+def _print_prepare_progress(done: int, total: int) -> None:
+    pct = done / total * 100 if total else 100.0
+    text = f"\rPreparing first-turn states: {pct:6.2f}% | {done}/{total} samples"
+    print(text, end="", flush=True)
+
+
 def run(samples: int, rollouts: int, seed: int, output: Path | None = None, workers: int | None = None) -> Path:
     if samples <= 0 or rollouts <= 0:
         raise ValueError("samples and rollouts must be positive")
@@ -180,7 +195,11 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None, work
     )
     _print_progress(0, total_branches, samples, rollouts, max_workers)
 
-    payloads: list[tuple[int, GameEngine, tuple[int, ...], Category, int, int, int]] = []
+    # Only the completed first-turn dice are needed to reconstruct the branch.
+    # Passing a full GameEngine through multiprocessing used to add needless
+    # deepcopy/pickling work before the expensive simulation even started.
+    payloads: list[tuple[int, tuple[int, ...], Category, int, int, int, int]] = []
+    _print_prepare_progress(0, samples)
     for sample in range(1, samples + 1):
         first_seed = rng.randrange(2**63)
         base = GameEngine(dice_roller=DiceRoller(random.Random(first_seed)))
@@ -192,9 +211,12 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None, work
         )
         best_other_score = ScoreCalculator.calculate(best_other, first_dice)
         payloads.append((
-            sample, copy.deepcopy(base), first_dice, baseline_category,
+            sample, first_dice, baseline_category,
             choice_score, best_other_score, rng.randrange(2**63),
+            ALL_CATEGORIES.index(best_other),
         ))
+        _print_prepare_progress(sample, samples)
+    print()
 
     completed_samples = 0
     with output.open("w", encoding="utf-8-sig", newline="") as handle:
