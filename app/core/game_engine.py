@@ -90,17 +90,30 @@ class GameEngine:
             self.state.game_over = True
         return score
 
-    def end_turn(self) -> GameState:
-        """Finish a scored turn and advance to the other participant."""
+    def end_turn(self, player_only: bool = False) -> GameState:
+        """Finish a scored turn and advance to the next participant.
+
+        ``player_only=True`` is used by the current PySide6 prototype so the
+        PLAYER can complete all 12 categories before the AI turn is connected.
+        The default two-player behavior remains unchanged.
+        """
         self._require_active_game()
         if not self.state.turn_scored:
             raise RuntimeError("A category must be scored before ending the turn.")
         if self.state.game_over:
             return self.state
 
-        self.state.current_player = (
-            PlayerId.AI if self.state.current_player is PlayerId.PLAYER else PlayerId.PLAYER
-        )
+        if player_only:
+            if self.state.current_player is not PlayerId.PLAYER:
+                raise RuntimeError("Player-only turns require the PLAYER to be active.")
+            if len(self.state.players[PlayerId.PLAYER].category_scores) >= len(ALL_CATEGORIES):
+                self.state.game_over = True
+                return self.state
+        else:
+            self.state.current_player = (
+                PlayerId.AI if self.state.current_player is PlayerId.PLAYER else PlayerId.PLAYER
+            )
+
         self.state.turn += 1
         self.state.current_dice = None
         self.state.held_indices = frozenset()
@@ -110,7 +123,7 @@ class GameEngine:
         return self.state
 
     def is_game_over(self) -> bool:
-        """Whether both participants have used every category."""
+        """Whether the current game has reached its configured end condition."""
         return self.state.game_over
 
     def _require_active_game(self) -> None:
