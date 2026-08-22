@@ -6,7 +6,7 @@ Run from the repository root with, for example::
 
 The sampler uses the real GameEngine and ExpectedValueStrategy (FastEV) but does
 not open the GUI. It writes one analysis CSV under ``logs/`` containing one row
-per AI decision plus game-result rows. Each decision keeps the selected action,
+per decision plus game-result rows. Each decision keeps the selected action,
 the top candidate EVs, and immediate scores for every currently available
 category so later analysis can distinguish an EV decision from a category bias.
 """
@@ -20,6 +20,7 @@ import random
 from datetime import datetime
 from pathlib import Path
 
+from app.core.categories import ALL_CATEGORIES
 from app.core.dice import DiceRoller
 from app.core.game_engine import GameEngine
 from app.core.game_state import PlayerId
@@ -30,28 +31,11 @@ from .expected_value_strategy import ExpectedValueStrategy
 
 
 FIELDS = (
-    "timestamp",
-    "game",
-    "turn",
-    "player",
-    "roll",
-    "dice",
-    "held_before",
-    "decision_type",
-    "selected_category",
-    "selected_ev",
-    "candidate_1_action",
-    "candidate_1_ev",
-    "candidate_2_action",
-    "candidate_2_ev",
-    "candidate_3_action",
-    "candidate_3_ev",
-    "available_category_scores",
-    "reasoning",
-    "game_event",
-    "player_total",
-    "ai_total",
-    "winner",
+    "timestamp", "game", "turn", "player", "roll", "dice", "held_before",
+    "decision_type", "selected_category", "selected_ev",
+    "candidate_1_action", "candidate_1_ev", "candidate_2_action", "candidate_2_ev",
+    "candidate_3_action", "candidate_3_ev", "available_category_scores", "reasoning",
+    "game_event", "player_total", "ai_total", "winner",
 )
 
 
@@ -67,7 +51,8 @@ def _available_scores(engine: GameEngine) -> str:
     dice = tuple(state.current_dice or ())
     values = {
         category.name: ScoreCalculator.calculate(category, dice)
-        for category in player.available_categories
+        for category in ALL_CATEGORIES
+        if category not in player.used_categories
     }
     return json.dumps(values, ensure_ascii=False, sort_keys=True)
 
@@ -166,7 +151,7 @@ def run(games: int, seed: int | None, output: Path | None = None) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Collect FastEV decision samples without opening the GUI.")
-    parser.add_argument("--games", type=int, default=100, help="Number of complete AI games to sample (default: 100).")
+    parser.add_argument("--games", type=int, default=100, help="Number of complete self-play games to sample (default: 100).")
     parser.add_argument("--seed", type=int, default=0, help="Base RNG seed for reproducible samples (default: 0).")
     parser.add_argument("--output", type=Path, default=None, help="Optional output CSV path. Defaults to logs/fast_ev_sample_YYYYMMDDHHMMSS.csv.")
     args = parser.parse_args()
