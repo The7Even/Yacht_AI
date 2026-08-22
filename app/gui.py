@@ -371,3 +371,254 @@ class YachtWindow(QMainWindow):
 
         layout.addLayout(grid)
         return wrap
+
+    def _category_group(
+        self, title: str, categories: Iterable[Category], special: bool = False
+    ) -> QFrame:
+        wrap = QFrame()
+        layout = QVBoxLayout(wrap)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+
+        subsection = QLabel(title)
+        subsection.setObjectName("subsection")
+        layout.addWidget(subsection)
+
+        grid = QGridLayout()
+        grid.setSpacing(5)
+
+        for index, category in enumerate(categories):
+            button = QPushButton()
+            button.setObjectName("category")
+            button.setProperty("available", False)
+            button.setProperty("special", special)
+
+            if category in self.category_icons:
+                button.setIcon(self.category_icons[category])
+                button.setIconSize(QSize(88, 42))
+            elif category.is_upper and category.upper_face in self.dice_icons:
+                button.setIcon(self.dice_icons[category.upper_face])
+                button.setIconSize(QSize(34, 34))
+
+            button.setText(f"{CATEGORY_SHORT[category]}\n사용 가능 점수: -")
+            button.clicked.connect(
+                lambda _=False, cat=category: self.score_category(cat)
+            )
+            self.category_buttons[category] = button
+            grid.addWidget(button, index // 3, index % 3)
+
+        layout.addLayout(grid)
+        return wrap
+
+    def _build_ai_panel(self) -> QFrame:
+        outer = QFrame()
+        outer.setObjectName("card")
+        layout = QVBoxLayout(outer)
+        layout.setContentsMargins(9, 9, 9, 9)
+
+        title = QLabel("AI 진행 상황")
+        title.setObjectName("section")
+        layout.addWidget(title)
+
+        ai_status = QLabel(
+            "AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\n현재는 PLAYER 프로토타입 단계입니다."
+        )
+        ai_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        ai_status.setObjectName("status")
+        layout.addWidget(ai_status, 1)
+
+        log_title = QLabel("게임 로그")
+        log_title.setObjectName("section")
+        layout.addWidget(log_title)
+
+        self.log_label = QLabel("게임이 시작되었습니다.\nPLAYER 턴입니다.")
+        self.log_label.setObjectName("log")
+        self.log_label.setWordWrap(True)
+        layout.addWidget(self.log_label)
+        return outer
+
+    def start_new_game(self) -> None:
+        self.engine.start_game()
+        self._refresh()
+        self._set_status(
+            "0/3회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다."
+        )
+
+    def roll_dice(self) -> None:
+        try:
+            dice = self.engine.roll_dice()
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc))
+            return
+
+        self._refresh(dice)
+        self._set_status(
+            f"{self.engine.state.roll_count}/{MAX_ROLLS_PER_TURN}회 굴렸습니다. "
+            "주사위를 클릭하면 HOLD할 수 있습니다."
+        )
+
+    def toggle_hold(self, index: int) -> None:
+        if self.engine.state.current_dice is None:
+            return
+
+        try:
+            if index in self.engine.state.held_indices:
+                self.engine.unhold_dice(index)
+            else:
+                self.engine.hold_dice(index)
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc))
+            return
+
+        self._refresh()
+
+    def score_category(self, category: Category) -> None:
+        try:
+            score = self.engine.score_category(category)
+        except (RuntimeError, ValueError) as exc:
+            self._set_status(str(exc))
+            return
+
+        if self.engine.is_game_over():
+            self._refresh()
+            QMessageBox.information(
+                self,
+                "게임 종료",
+                f"게임이 종료되었습니다.\nPLAYER {self.engine.state.player_score}점",
+            )
+            return
+
+        self._set_status(
+            f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. "
+            "AI 턴은 다음 단계에서 연결합니다."
+        )
+        self.engine.end_turn()
+        self._refresh()
+
+    def _refresh(self, dice: Iterable[int] | None = None) -> None:
+        state = self.engine.state
+        dice = tuple(dice) if dice is not None else state.current_dice
+
+        for index, button in enumerate(self.die_buttons):
+            value = dice[index] if dice and index < len(dice) else None
+            if value and value in self.dice_icons:
+                button.setIcon(self.dice_icons[value])
+                button.setIconSize(QSize(98, 98))
+                button.setText("")
+            else:
+                button.setIcon(QIcon())
+                button.setText("-")
+
+            button.setProperty("held", index in state.held_indices)
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.setEnabled(
+                value is not None
+                and state.current_player is PlayerId.PLAYER
+                and not state.turn_scored
+            )
+
+        remaining = max(0, MAX_ROLLS_PER_TURN - state.roll_count)
+        self.roll_label.setText(f"{remaining}회 남음")
+        self.roll_button.setEnabled(
+            state.current_player is PlayerId.PLAYER
+            and not state.turn_scored
+            and state.roll_count < MAX_ROLLS_PER_TURN
+        )
+
+        available = (
+            set(self.engine.get_available_categories())
+            if state.current_dice
+            else set()
+        )
+        scores = self.engine.get_current_scores() if state.current_dice else {}
+
+        for category, button in self.category_buttons.items():
+            is_available = category in available
+            button.setProperty("available", is_available)
+            if is_available:
+                button.setText(
+                    f"{CATEGORY_SHORT[category]}\n사용 가능 점수: {scores[category]}점"
+                )
+            else:
+                button.setText(f"{CATEGORY_SHORT[category]}\n사용됨")
+            button.setEnabled(is_available)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+        for category in ALL_CATEGORIES:
+            for player in (PlayerId.PLAYER, PlayerId.AI):
+                score = state.players[player].category_scores.get(category)
+                self.score_labels[player, category].setText(
+                    "-" if score is None else str(score)
+                )
+
+        self.player_total.setText(str(state.player_score))
+        self.ai_total.setText(str(state.ai_score))
+        self.center_total_label.setText(
+            f"{state.player_score} : {state.ai_score}"
+        )
+
+        diff = state.player_score - state.ai_score
+        if diff > 0:
+            gap_text, gap_object = (
+                f"점수 차이 {diff}점 · PLAYER 우세",
+                "scoreGap",
+            )
+        elif diff < 0:
+            gap_text, gap_object = (
+                f"점수 차이 {abs(diff)}점 · AI 우세",
+                "scoreGapNegative",
+            )
+        else:
+            gap_text, gap_object = "점수 차이 0점 · 동점", "scoreGap"
+
+        self.gap_label.setText(gap_text)
+        self.gap_label.setObjectName(gap_object)
+        self.gap_label.style().unpolish(self.gap_label)
+        self.gap_label.style().polish(self.gap_label)
+
+        self.player_upper_label.setText(f"{state.player_upper_total} / 63")
+        self.ai_upper_label.setText(f"{state.ai_upper_total} / 63")
+        self.player_bonus_summary.setText(
+            "획득 (+35)" if state.player_has_bonus else "-"
+        )
+        self.ai_bonus_summary.setText(
+            "획득 (+35)" if state.ai_has_bonus else "-"
+        )
+        self.player_table_total.setText(str(state.player_score))
+        self.ai_table_total.setText(str(state.ai_score))
+
+        round_no = min(12, (state.turn + 1) // 2)
+        self.turn_label.setText(f"턴 {round_no} / 12")
+
+    def _set_status(self, text: str) -> None:
+        if self.status_label:
+            self.status_label.setText(text)
+        if self.log_label:
+            self.log_label.setText(text)
+
+    def show_rules(self) -> None:
+        QMessageBox.information(
+            self,
+            "Yacht 규칙",
+            "• 플레이어마다 12개 카테고리를 한 번씩 사용합니다.\n"
+            "• 한 턴에 최대 3번 굴릴 수 있습니다.\n"
+            "• 굴린 주사위를 클릭하면 HOLD할 수 있습니다.\n"
+            "• 마지막으로 사용하지 않은 카테고리 하나를 선택해 점수를 기록합니다.\n"
+            "• 상단 6개 합계가 63점 이상이면 35점 보너스를 획득합니다.\n"
+            "• 모든 카테고리를 사용하면 게임이 종료됩니다.",
+        )
+
+
+def main() -> int:
+    app = QApplication(sys.argv)
+    app.setApplicationName("Yacht Game Prototype")
+    app.setFont(QFont("Segoe UI", 10))
+    window = YachtWindow()
+    window.show()
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
