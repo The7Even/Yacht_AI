@@ -428,7 +428,7 @@ class YachtWindow(QMainWindow):
         title = QLabel("AI 진행 상황")
         title.setObjectName("section")
         layout.addWidget(title)
-        ai_status = QLabel("AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\n현재는 PLAYER 프로토타입 단계입니다.")
+        ai_status = QLabel("AI (FastEV)\n\n게임 엔진 연결 준비가 완료되었습니다.\n\n현재는 PLAYER 12턴 프로토타입 단계입니다.")
         ai_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ai_status.setObjectName("status")
         layout.addWidget(ai_status, 1)
@@ -453,7 +453,10 @@ class YachtWindow(QMainWindow):
             self._set_status(str(exc))
             return
         self._refresh(dice)
-        self._set_status(f"{self.engine.state.roll_count}/{MAX_ROLLS_PER_TURN}회 굴렸습니다. 주사위를 클릭하면 HOLD할 수 있습니다.")
+        self._set_status(
+            f"{self.engine.state.roll_count}/{MAX_ROLLS_PER_TURN}회 굴렸습니다. "
+            "주사위를 클릭하면 HOLD할 수 있습니다."
+        )
 
     def toggle_hold(self, index: int) -> None:
         if self.engine.state.current_dice is None:
@@ -474,17 +477,28 @@ class YachtWindow(QMainWindow):
         except (RuntimeError, ValueError) as exc:
             self._set_status(str(exc))
             return
+
         if self.engine.is_game_over():
             self._refresh()
-            QMessageBox.information(self, "게임 종료", f"게임이 종료되었습니다.\nPLAYER {self.engine.state.player_score}점")
+            QMessageBox.information(
+                self,
+                "게임 종료",
+                f"게임이 종료되었습니다.\nPLAYER {self.engine.state.player_score}점",
+            )
             return
-        self._set_status(f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. AI 턴은 다음 단계에서 연결합니다.")
-        self.engine.end_turn()
+
+        self.engine.end_turn(player_only=True)
+        next_turn = min(12, self.engine.state.turn)
         self._refresh()
+        self._set_status(
+            f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. "
+            f"다음은 PLAYER {next_turn}턴입니다."
+        )
 
     def _refresh(self, dice: Iterable[int] | None = None) -> None:
         state = self.engine.state
         dice = tuple(dice) if dice is not None else state.current_dice
+
         for index, button in enumerate(self.die_buttons):
             value = dice[index] if dice and index < len(dice) else None
             if value and value in self.dice_icons:
@@ -494,22 +508,37 @@ class YachtWindow(QMainWindow):
             else:
                 button.setIcon(QIcon())
                 button.setText("-")
+
             button.setProperty("held", index in state.held_indices)
             button.style().unpolish(button)
             button.style().polish(button)
-            button.setEnabled(value is not None and state.current_player is PlayerId.PLAYER and not state.turn_scored)
+            button.setEnabled(
+                value is not None
+                and state.current_player is PlayerId.PLAYER
+                and not state.turn_scored
+            )
 
         remaining = max(0, MAX_ROLLS_PER_TURN - state.roll_count)
         self.roll_label.setText(f"{remaining}회 남음")
-        self.roll_button.setEnabled(state.current_player is PlayerId.PLAYER and not state.turn_scored and state.roll_count < MAX_ROLLS_PER_TURN)
+        self.roll_button.setEnabled(
+            state.current_player is PlayerId.PLAYER
+            and not state.turn_scored
+            and state.roll_count < MAX_ROLLS_PER_TURN
+        )
 
-        available = set(self.engine.get_available_categories()) if state.current_dice else set()
+        available = (
+            set(self.engine.get_available_categories())
+            if state.current_dice
+            else set()
+        )
         scores = self.engine.get_current_scores() if state.current_dice else {}
         for category, button in self.category_buttons.items():
             is_available = category in available
             button.setProperty("available", is_available)
             if is_available:
-                button.setText(f"{CATEGORY_SHORT[category]}\n사용 가능 점수: {scores[category]}점")
+                button.setText(
+                    f"{CATEGORY_SHORT[category]}\n사용 가능 점수: {scores[category]}점"
+                )
             else:
                 button.setText(f"{CATEGORY_SHORT[category]}\n사용됨")
             button.setEnabled(is_available)
@@ -519,18 +548,28 @@ class YachtWindow(QMainWindow):
         for category in ALL_CATEGORIES:
             for player in (PlayerId.PLAYER, PlayerId.AI):
                 score = state.players[player].category_scores.get(category)
-                self.score_labels[player, category].setText("-" if score is None else str(score))
+                self.score_labels[player, category].setText(
+                    "-" if score is None else str(score)
+                )
 
         self.player_total.setText(str(state.player_score))
         self.ai_total.setText(str(state.ai_score))
         self.center_total_label.setText(f"{state.player_score} : {state.ai_score}")
+
         diff = state.player_score - state.ai_score
         if diff > 0:
-            gap_text, gap_object = f"점수 차이 {diff}점 · PLAYER 우세", "scoreGap"
+            gap_text, gap_object = (
+                f"점수 차이 {diff}점 · PLAYER 우세",
+                "scoreGap",
+            )
         elif diff < 0:
-            gap_text, gap_object = f"점수 차이 {abs(diff)}점 · AI 우세", "scoreGapNegative"
+            gap_text, gap_object = (
+                f"점수 차이 {abs(diff)}점 · AI 우세",
+                "scoreGapNegative",
+            )
         else:
             gap_text, gap_object = "점수 차이 0점 · 동점", "scoreGap"
+
         self.gap_label.setText(gap_text)
         self.gap_label.setObjectName(gap_object)
         self.gap_label.style().unpolish(self.gap_label)
@@ -538,11 +577,16 @@ class YachtWindow(QMainWindow):
 
         self.player_upper_label.setText(f"{state.player_upper_total} / 63")
         self.ai_upper_label.setText(f"{state.ai_upper_total} / 63")
-        self.player_bonus_summary.setText("획득 (+35)" if state.player_has_bonus else "-")
-        self.ai_bonus_summary.setText("획득 (+35)" if state.ai_has_bonus else "-")
+        self.player_bonus_summary.setText(
+            "획득 (+35)" if state.player_has_bonus else "-"
+        )
+        self.ai_bonus_summary.setText(
+            "획득 (+35)" if state.ai_has_bonus else "-"
+        )
         self.player_table_total.setText(str(state.player_score))
         self.ai_table_total.setText(str(state.ai_score))
-        round_no = min(12, (state.turn + 1) // 2)
+
+        round_no = min(12, state.turn)
         self.turn_label.setText(f"턴 {round_no} / 12")
 
     def _set_status(self, text: str) -> None:
