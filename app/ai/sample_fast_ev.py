@@ -17,6 +17,7 @@ import argparse
 import csv
 import json
 import random
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -85,8 +86,16 @@ def _decision_row(game_no: int, engine: GameEngine, result: DecisionResult) -> d
     return row
 
 
-def _play_game(engine: GameEngine, strategy: ExpectedValueStrategy, game_no: int, writer: csv.DictWriter) -> None:
+def _play_game(
+    engine: GameEngine,
+    strategy: ExpectedValueStrategy,
+    game_no: int,
+    writer: csv.DictWriter,
+    progress_callback=None,
+) -> int:
     engine.start_game()
+    completed_turns = 0
+
     while not engine.is_game_over():
         while not engine.state.turn_scored:
             if engine.state.current_dice is None:
@@ -111,6 +120,10 @@ def _play_game(engine: GameEngine, strategy: ExpectedValueStrategy, game_no: int
         if not engine.is_game_over():
             engine.end_turn()
 
+        completed_turns += 1
+        if progress_callback is not None:
+            progress_callback(completed_turns)
+
     player_score = engine.state.players[PlayerId.PLAYER].total_score
     ai_score = engine.state.players[PlayerId.AI].total_score
     winner = "AI" if ai_score > player_score else "PLAYER" if player_score > ai_score else "DRAW"
@@ -122,6 +135,25 @@ def _play_game(engine: GameEngine, strategy: ExpectedValueStrategy, game_no: int
         "ai_total": ai_score,
         "winner": winner,
     })
+    return completed_turns
+
+
+def _print_progress(completed_turns: int, total_turns: int, games: int) -> None:
+    percent = min(100.0, completed_turns / total_turns * 100.0)
+    bar_width = 40
+    filled = int(bar_width * percent / 100.0)
+    bar = "#" * filled + "." * (bar_width - filled)
+    completed_games = completed_turns // 24
+    current_turn = completed_turns % 24
+    if current_turn == 0 and completed_turns < total_turns:
+        current_turn = 24
+    message = (
+        f"Overall [{bar}] {percent:6.2f}% | "
+        f"{completed_turns}/{total_turns} turns | "
+        f"Game {min(completed_games + 1, games)}/{games} | "
+        f"turn {current_turn}/24"
+    )
+    print("\r" + message, end="", flush=True)
 
 
 def run(games: int, seed: int | None, output: Path | None = None) -> Path:
@@ -134,18 +166,29 @@ def run(games: int, seed: int | None, output: Path | None = None) -> Path:
         stamp = datetime.now().strftime("%Y%m%d%H%M%S")
         output = logs_dir / f"fast_ev_sample_{stamp}.csv"
 
+    total_turns = games * 24
+    completed_turns = 0
     rng = random.Random(seed)
     strategy = ExpectedValueStrategy()
     with output.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
         writer.writeheader()
+        _print_progress(completed_turns, total_turns, games)
+
         for game_no in range(1, games + 1):
             game_seed = rng.randrange(0, 2**63) if seed is not None else None
             engine = GameEngine(dice_roller=DiceRoller(random.Random(game_seed)))
-            _play_game(engine, strategy, game_no, writer)
-            handle.flush()
-            print(f"[{game_no}/{games}] complete")
 
+            def on_turn_complete(_game_turn: int) -> None:
+                nonlocal completed_turns
+                completed_turns += 1
+                _print_progress(completed_turns, total_turns, games)
+
+            _play_game(engine, strategy, game_no, writer, on_turn_complete)
+            handle.flush()
+
+    print(file=sys.stdout)
+    print(f"Saved: {output}")
     return output
 
 
@@ -156,7 +199,6 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=None, help="Optional output CSV path. Defaults to logs/fast_ev_sample_YYYYMMDDHHMMSS.csv.")
     args = parser.parse_args()
     path = run(args.games, args.seed, args.output)
-    print(f"Saved: {path}")
     return 0
 
 
