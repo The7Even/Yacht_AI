@@ -40,6 +40,7 @@ QLabel#subsection { font-size: 12px; font-weight: 800; color: #b7c6d9; }
 QLabel#scorecardTitle { font-size: 13px; font-weight: 800; color: #e8edf7; }
 QLabel#scoreGap { font-size: 14px; font-weight: 700; color: #8fbfff; }
 QLabel#scoreGapNegative { font-size: 14px; font-weight: 700; color: #ff9aaa; }
+QLabel#scoreGapWin { font-size: 15px; font-weight: 900; color: #f4f7fb; }
 QLabel#playerHeader { color: #64a9ff; font-size: 12px; font-weight: 800; }
 QLabel#aiHeader { color: #ff7f91; font-size: 12px; font-weight: 800; }
 QLabel#playerCell { background: #14375f; border: 1px solid #285f98; border-radius: 5px; padding: 4px 2px; color: #78b5ff; font-size: 13px; font-weight: 800; min-height: 22px; }
@@ -368,8 +369,17 @@ class YachtWindow(QMainWindow):
         self._set_status(f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. 게임이 종료되었습니다.", log=False); self._set_ai_status("AI (FastEV)\n\n게임 종료\n\n모든 카테고리가 사용되었습니다."); self._show_final_result()
 
     def _show_final_result(self) -> None:
-        self._console(f"FINAL RESULT player={self.engine.state.player_score} ai={self.engine.state.ai_score}", logging.INFO)
-        QMessageBox.information(self, "게임 종료", f"12턴이 모두 완료되었습니다.\nPLAYER {self.engine.state.player_score}점\nAI {self.engine.state.ai_score}점")
+        player = self.engine.state.player_score
+        ai = self.engine.state.ai_score
+        if player > ai:
+            result = "PLAYER 승리"
+        elif ai > player:
+            result = "AI 승리"
+        else:
+            result = "무승부"
+        self._console(f"FINAL RESULT result={result} player={player} ai={ai}", logging.INFO)
+        self._refresh()
+        QMessageBox.information(self, "게임 종료", f"12턴이 모두 완료되었습니다.\n\n{result}\nPLAYER {player}점\nAI {ai}점")
 
     def _refresh(self, dice: Iterable[int] | None = None) -> None:
         state = self.engine.state; dice_values = tuple(dice) if dice is not None else state.current_dice
@@ -389,7 +399,10 @@ class YachtWindow(QMainWindow):
                 score = state.players[player].category_scores.get(category); self.score_labels[player, category].setText("-" if score is None else str(score))
         self.player_total.setText(str(state.player_score)); self.ai_total.setText(str(state.ai_score)); self.center_total_label.setText(f"{state.player_score} : {state.ai_score}")
         diff = state.player_score - state.ai_score
-        gap_text, gap_object = ((f"점수 차이 {diff}점 · PLAYER 우세", "scoreGap") if diff > 0 else (f"점수 차이 {abs(diff)}점 · AI 우세", "scoreGapNegative") if diff < 0 else ("점수 차이 0점 · 동점", "scoreGap"))
+        if self.engine.is_game_over():
+            gap_text, gap_object = (("PLAYER 승리", "scoreGapWin") if diff > 0 else ("AI 승리", "scoreGapWin") if diff < 0 else ("무승부", "scoreGapWin"))
+        else:
+            gap_text, gap_object = ((f"점수 차이 {diff}점 · PLAYER 우세", "scoreGap") if diff > 0 else (f"점수 차이 {abs(diff)}점 · AI 우세", "scoreGapNegative") if diff < 0 else ("점수 차이 0점 · 동점", "scoreGap"))
         self.gap_label.setText(gap_text); self.gap_label.setObjectName(gap_object); self.gap_label.style().unpolish(self.gap_label); self.gap_label.style().polish(self.gap_label)
         self.player_upper_label.setText(f"{state.player_upper_total} / 63"); self.ai_upper_label.setText(f"{state.ai_upper_total} / 63"); self.player_bonus_summary.setText("획득 (+35)" if state.player_has_bonus else "-"); self.ai_bonus_summary.setText("획득 (+35)" if state.ai_has_bonus else "-"); self.player_table_total.setText(str(state.player_score)); self.ai_table_total.setText(str(state.ai_score)); self.turn_label.setText(f"턴 {min(12, state.turn)} / 12")
 
