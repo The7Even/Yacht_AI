@@ -478,18 +478,21 @@ class YachtWindow(QMainWindow):
             self._set_status(str(exc))
             return
 
+        self.engine.end_turn(player_only=True)
+        self._refresh()
+
         if self.engine.is_game_over():
-            self._refresh()
             QMessageBox.information(
                 self,
                 "게임 종료",
-                f"게임이 종료되었습니다.\nPLAYER {self.engine.state.player_score}점",
+                f"12턴이 모두 완료되었습니다.\nPLAYER {self.engine.state.player_score}점",
+            )
+            self._set_status(
+                f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. 게임이 종료되었습니다."
             )
             return
 
-        self.engine.end_turn(player_only=True)
         next_turn = min(12, self.engine.state.turn)
-        self._refresh()
         self._set_status(
             f"{CATEGORY_SHORT[category]}에 {score}점을 기록했습니다. "
             f"다음은 PLAYER {next_turn}턴입니다."
