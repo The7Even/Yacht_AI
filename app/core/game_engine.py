@@ -15,10 +15,14 @@ class GameEngine:
     def __init__(self, dice_roller: DiceRoller | None = None) -> None:
         self._dice_roller = dice_roller or DiceRoller()
         self.state = GameState()
+        self.last_ai_action = None
+        self.last_ai_reasoning = ""
 
     def start_game(self) -> GameState:
         """Replace any previous game with a fresh game at the player's first turn."""
         self.state = GameState(game_started=True, turn=1)
+        self.last_ai_action = None
+        self.last_ai_reasoning = ""
         self.start_turn()
         return self.state
 
@@ -102,9 +106,9 @@ class GameEngine:
     def end_turn(self, player_only: bool = False) -> GameState:
         """Finish a scored turn and advance to the next participant.
 
-        ``player_only=True`` is used by the current PySide6 prototype so the
-        PLAYER can complete all 12 categories before the AI turn is connected.
-        The default two-player behavior remains unchanged.
+        ``player_only=True`` is retained as the PySide6 integration entry point.
+        It now means "finish the PLAYER turn, play the AI turn, then prepare the
+        next PLAYER round" instead of skipping the AI entirely.
         """
         self._require_active_game()
         if not self.state.turn_scored:
@@ -115,14 +119,12 @@ class GameEngine:
         if player_only:
             if self.state.current_player is not PlayerId.PLAYER:
                 raise RuntimeError("Player-only turns require the PLAYER to be active.")
-            if len(self.state.players[PlayerId.PLAYER].category_scores) >= len(ALL_CATEGORIES):
-                self.state.game_over = True
-                return self.state
-        else:
-            self.state.current_player = (
-                PlayerId.AI if self.state.current_player is PlayerId.PLAYER else PlayerId.PLAYER
-            )
+            self._finish_player_and_play_ai()
+            return self.state
 
+        self.state.current_player = (
+            PlayerId.AI if self.state.current_player is PlayerId.PLAYER else PlayerId.PLAYER
+        )
         self.state.turn += 1
         self.state.current_dice = None
         self.state.held_indices = frozenset()
@@ -130,6 +132,58 @@ class GameEngine:
         self.state.turn_scored = False
         self.start_turn()
         return self.state
+
+    def _finish_player_and_play_ai(self) -> None:
+        """Run one complete AI turn immediately after the PLAYER scores."""
+        from app.ai.expected_value_strategy import ExpectedValueStrategy
+        from app.ai.action_generator import ActionType
+
+        self.state.current_player = PlayerId.AI
+        self.state.current_dice = None
+        self.state.held_indices = frozenset()
+        self.state.roll_count = 0
+        self.state.turn_scored = False
+
+        strategy = ExpectedValueStrategy()
+        self.last_ai_action = None
+        self.last_ai_reasoning = ""
+
+        while self.state.roll_count < MAX_ROLLS_PER_TURN and not self.state.turn_scored:
+            self.roll_dice()
+            decision = strategy.decide(self.state)
+            self.last_ai_action = decision.action
+            self.last_ai_reasoning = decision.reasoning
+
+            if decision.action.type is ActionType.SCORE:
+                assert decision.action.selected_category is not None
+                self.score_category(decision.action.selected_category)
+                break
+
+            desired_held = frozenset(decision.action.held_indices)
+            current_held = self.state.held_indices
+            for index in sorted(current_held - desired_held):
+                self.unhold_dice(index)
+            for index in sorted(desired_held - current_held):
+                self.hold_dice(index)
+
+        if not self.state.turn_scored:
+            decision = strategy.decide(self.state)
+            self.last_ai_action = decision.action
+            self.last_ai_reasoning = decision.reasoning
+            if decision.action.selected_category is None:
+                raise RuntimeError("AI failed to choose a category after the final roll.")
+            self.score_category(decision.action.selected_category)
+
+        if self.state.game_over:
+            return
+
+        self.state.current_player = PlayerId.PLAYER
+        self.state.turn += 1
+        self.state.current_dice = None
+        self.state.held_indices = frozenset()
+        self.state.roll_count = 0
+        self.state.turn_scored = False
+        self.start_turn()
 
     def is_game_over(self) -> bool:
         """Whether the current game has reached its configured end condition."""
