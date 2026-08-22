@@ -1,14 +1,15 @@
 """Compare taking Choice now against preserving it for the rest of the game.
 
-This is an experiment, not a strategy change.  It generates first-turn states
+This is an experiment, not a strategy change. It generates first-turn states
 using FastEV, then branches from the same completed first-turn dice:
 
 A) score Choice immediately
 B) score the best available non-Choice category immediately
 
-Each branch is then completed with the normal FastEV policy for both players.
-The same random seed is used for paired branches so the comparison is less
-sensitive to unrelated dice noise.
+Each branch is then completed with the normal FastEV policy. Paired branches
+use the same subsequent dice seed, making the comparison less sensitive to
+unrelated random rolls. The reported final score is the total score of both
+players; the two branches differ only in the forced first-turn category.
 
 Example::
     python -m app.ai.compare_choice_value --samples 1000 --rollouts 20
@@ -35,8 +36,8 @@ from .expected_value_strategy import ExpectedValueStrategy
 
 FIELDS = (
     "sample", "first_dice", "choice_score", "best_other_category", "best_other_score",
-    "score_gap", "branch_rollout", "choice_final_score", "other_final_score",
-    "delta_choice_minus_other", "choice_wins", "other_wins", "draw",
+    "score_gap", "baseline_category", "branch_rollout", "choice_total_score",
+    "other_total_score", "delta_choice_minus_other", "choice_better", "other_better", "draw",
 )
 
 
@@ -49,8 +50,7 @@ def _play_turn_to_score(engine: GameEngine, strategy: ExpectedValueStrategy) -> 
         if action.type is ActionType.SCORE:
             category = action.selected_category
             assert category is not None
-            dice = tuple(engine.state.current_dice or ())
-            return dice, category
+            return tuple(engine.state.current_dice or ()), category
         desired = frozenset(action.held_indices)
         for index in engine.state.held_indices - desired:
             engine.unhold_dice(index)
@@ -109,6 +109,7 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
     strategy = ExpectedValueStrategy()
     total = samples * rollouts
     done = 0
+
     with output.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS)
         writer.writeheader()
@@ -116,6 +117,7 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
             first_seed = rng.randrange(2**63)
             base = GameEngine(dice_roller=DiceRoller(random.Random(first_seed)))
             first_dice, baseline_category = _play_turn_to_score(base, strategy)
+
             choice_score = ScoreCalculator.calculate(Category.CHOICE, first_dice)
             available = [c for c in ALL_CATEGORIES if c is not Category.CHOICE]
             best_other = max(available, key=lambda c: ScoreCalculator.calculate(c, first_dice))
@@ -126,14 +128,11 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
                 branch_seed = rng.randrange(2**63)
                 choice_result = _paired_branch(template, Category.CHOICE, branch_seed, strategy)
                 other_result = _paired_branch(template, best_other, branch_seed, strategy)
-                choice_final = choice_result[PlayerId.AI is PlayerId.PLAYER]
-                other_final = other_result[PlayerId.AI is PlayerId.PLAYER]
-                # The first-turn actor is whichever player was current when the branch was made.
-                actor = template.state.players[template.state.current_player]
-                # total_score already includes both players; record the branch winner margin.
+
                 choice_total = choice_result[0] + choice_result[1]
                 other_total = other_result[0] + other_result[1]
                 delta = choice_total - other_total
+
                 writer.writerow({
                     "sample": sample,
                     "first_dice": json.dumps(list(first_dice)),
@@ -141,20 +140,23 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
                     "best_other_category": best_other.name,
                     "best_other_score": best_other_score,
                     "score_gap": choice_score - best_other_score,
+                    "baseline_category": baseline_category.name,
                     "branch_rollout": rollout,
-                    "choice_final_score": choice_total,
-                    "other_final_score": other_total,
+                    "choice_total_score": choice_total,
+                    "other_total_score": other_total,
                     "delta_choice_minus_other": delta,
-                    "choice_wins": int(delta > 0),
-                    "other_wins": int(delta < 0),
+                    "choice_better": int(delta > 0),
+                    "other_better": int(delta < 0),
                     "draw": int(delta == 0),
                 })
+
                 done += 1
                 if done == total or done % max(1, total // 100) == 0:
                     pct = done / total * 100
                     width = 40
                     filled = int(width * pct / 100)
-                    print(f"\rChoice Value [{ '#' * filled + '.' * (width-filled) }] {pct:6.2f}% | {done}/{total} rollouts", end="", flush=True)
+                    bar = "#" * filled + "." * (width - filled)
+                    print(f"\rChoice Value [{bar}] {pct:6.2f}% | {done}/{total} rollouts", end="", flush=True)
             handle.flush()
 
     print(f"\nSaved: {output}")
@@ -162,7 +164,7 @@ def run(samples: int, rollouts: int, seed: int, output: Path | None = None) -> P
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Compare preserving Choice against taking the best alternative on turn one.")
+    parser = argparse.ArgumentParser(description="Compare taking Choice against the best alternative on turn one.")
     parser.add_argument("--samples", type=int, default=1000)
     parser.add_argument("--rollouts", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
