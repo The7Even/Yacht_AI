@@ -19,6 +19,7 @@ from app.core.game_state import GameState
 from app.core.scoring import ScoreCalculator
 
 from .action_generator import Action, ActionAlternative, ActionGenerator, ActionType, DecisionResult
+from .category_value_evaluator import CategoryValueEvaluator
 
 
 _ALL_HANDS = tuple(combinations_with_replacement(range(MIN_FACE, MAX_FACE + 1), DICE_COUNT))
@@ -35,9 +36,13 @@ _SCORE_TABLE = {
 class ExpectedValueStrategy:
     """Chooses between scoring now and exact EV-maximizing reroll actions.
 
-    Terminal evaluation intentionally contains only immediate category score.  It is
-    kept separate so a later strategy can add bonus, risk, or opponent value.
+    Terminal reroll evaluation intentionally remains based on immediate score.
+    CategoryValueEvaluator is applied only when selecting the category to record,
+    keeping the new opportunity-cost behavior bounded to the observed Choice bias.
     """
+
+    def __init__(self, category_value_evaluator: CategoryValueEvaluator | None = None) -> None:
+        self._category_value_evaluator = category_value_evaluator or CategoryValueEvaluator()
 
     def decide(self, state: GameState) -> DecisionResult:
         """Return the highest-value valid action for a rolled game state."""
@@ -50,11 +55,12 @@ class ExpectedValueStrategy:
         dice = validate_dice(state.current_dice)
         sorted_dice = tuple(sorted(dice))
         remaining_rolls = MAX_ROLLS_PER_TURN - state.roll_count
-        terminal_action = Action(
-            ActionType.SCORE, selected_category=self._best_category(sorted_dice, available)
-        )
+        terminal_category = self._best_category(sorted_dice, available)
         candidates = [
-            ActionAlternative(terminal_action, self.evaluate_terminal_state(sorted_dice, available))
+            ActionAlternative(
+                Action(ActionType.SCORE, selected_category=terminal_category),
+                self._score_action_value(sorted_dice, terminal_category, available),
+            )
         ]
 
         if remaining_rolls > 0:
@@ -145,6 +151,15 @@ class ExpectedValueStrategy:
             raise ValueError("At least one category must be available.")
         scores = _SCORE_TABLE[values]
         return float(max(scores[_CATEGORY_INDEX[category]] for category in available))
+
+    def _score_action_value(
+        self,
+        dice: tuple[int, ...],
+        category: Category,
+        available: tuple[Category, ...],
+    ) -> float:
+        """Return the adjusted value shown for a score-now candidate."""
+        return self._category_value_evaluator.adjusted_score(dice, category, available)
 
     @classmethod
     @lru_cache(maxsize=100_000)
@@ -253,13 +268,9 @@ class ExpectedValueStrategy:
         category_set = set(categories)
         return tuple(category for category in ALL_CATEGORIES if category in category_set)
 
-    @staticmethod
-    def _best_category(dice: tuple[int, ...], available: tuple[Category, ...]) -> Category:
-        scores = _SCORE_TABLE[dice]
-        return max(
-            available,
-            key=lambda category: (scores[_CATEGORY_INDEX[category]], -_CATEGORY_INDEX[category]),
-        )
+    def _best_category(self, dice: tuple[int, ...], available: tuple[Category, ...]) -> Category:
+        """Choose a category using immediate score plus bounded preservation value."""
+        return self._category_value_evaluator.best_category(dice, available)
 
     @staticmethod
     def _candidate_sort_key(candidate: ActionAlternative) -> tuple[float, int, int]:
@@ -274,6 +285,6 @@ class ExpectedValueStrategy:
     def _reasoning(action: Action, expected_value: float) -> str:
         if action.type is ActionType.SCORE:
             assert action.selected_category is not None
-            return f"Record {action.selected_category.display_name}; expected value {expected_value:.2f}."
+            return f"Record {action.selected_category.display_name}; adjusted value {expected_value:.2f}."
         held = ", ".join(str(index) for index in action.held_indices) or "none"
         return f"Keep dice at indices [{held}] for expected value {expected_value:.2f}."
