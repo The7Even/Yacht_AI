@@ -3,7 +3,7 @@
 The base FastEV evaluator is intentionally exact for immediate scoring and
 reroll EV.  This module adds a small, explicit opportunity-cost layer only at
 category selection time.  It is deliberately conservative: special-category
-bonuses apply only when the category is within a small score gap of Choice, so
+bonuses apply only when the category is completed and is close to Choice, so
 obvious immediate-score decisions such as Large Straight or Yacht are not
 changed.
 """
@@ -37,8 +37,9 @@ class CategoryValueEvaluator:
 
         Choice is treated as a flexible fallback resource and receives a small
         opportunity-cost penalty while it remains available.  Four of a Kind
-        and Full House receive preservation value only when their immediate
-        score is close to the currently available Choice score.
+        and Full House receive preservation value only when they are actually
+        completed and their immediate score is close to the currently available
+        Choice score.
         """
         values = tuple(dice)
         available = tuple(available_categories)
@@ -56,7 +57,7 @@ class CategoryValueEvaluator:
         choice_score = ScoreCalculator.calculate(Category.CHOICE, values)
         score_gap = choice_score - immediate
 
-        if score_gap <= NEAR_CHOICE_GAP:
+        if immediate > 0 and score_gap <= NEAR_CHOICE_GAP:
             if category is Category.FOUR_OF_A_KIND:
                 return float(immediate) + FOUR_OF_A_KIND_PRESERVATION_VALUE
             if category is Category.FULL_HOUSE:
