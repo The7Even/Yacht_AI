@@ -2,6 +2,12 @@ import math
 
 from app.ai.action_generator import ActionType
 from app.ai.ai_player import AIPlayer
+from app.ai.category_value_evaluator import (
+    CHOICE_OPPORTUNITY_COST,
+    FOUR_OF_A_KIND_PRESERVATION_VALUE,
+    FULL_HOUSE_PRESERVATION_VALUE,
+    CategoryValueEvaluator,
+)
 from app.ai.expected_value_strategy import ExpectedValueStrategy
 from app.ai.strategy import RuleBasedStrategy
 from app.core.categories import ALL_CATEGORIES, Category
@@ -107,3 +113,63 @@ def test_rule_based_and_expected_value_strategies_work_with_the_same_engine_stat
     assert rule_decision.action.type in ActionType
     assert ev_decision.action.type in ActionType
     assert all(index in range(5) for index in ev_decision.held_indices)
+
+
+def test_category_value_evaluator_prefers_four_of_a_kind_on_choice_tie() -> None:
+    evaluator = CategoryValueEvaluator()
+    dice = (6, 6, 6, 6, 5)
+    available = (Category.CHOICE, Category.FOUR_OF_A_KIND)
+
+    assert evaluator.adjusted_score(dice, Category.CHOICE, available) == 26.0
+    assert evaluator.adjusted_score(dice, Category.FOUR_OF_A_KIND, available) == 33.0
+    assert evaluator.best_category(dice, available) is Category.FOUR_OF_A_KIND
+
+
+def test_category_value_evaluator_prefers_full_house_on_choice_tie() -> None:
+    evaluator = CategoryValueEvaluator()
+    dice = (6, 6, 6, 5, 5)
+    available = (Category.CHOICE, Category.FULL_HOUSE)
+
+    assert evaluator.adjusted_score(dice, Category.CHOICE, available) == 25.0
+    assert evaluator.adjusted_score(dice, Category.FULL_HOUSE, available) == 31.0
+    assert evaluator.best_category(dice, available) is Category.FULL_HOUSE
+
+
+def test_category_value_constants_are_conservative_and_explicit() -> None:
+    assert CHOICE_OPPORTUNITY_COST == 3.0
+    assert FOUR_OF_A_KIND_PRESERVATION_VALUE == 4.0
+    assert FULL_HOUSE_PRESERVATION_VALUE == 3.0
+
+
+def test_ev_scores_four_of_a_kind_instead_of_choice_on_tie() -> None:
+    state = state_with_hand(
+        (6, 6, 6, 6, 5),
+        roll_count=3,
+        available={Category.CHOICE, Category.FOUR_OF_A_KIND},
+    )
+    decision = ExpectedValueStrategy().decide(state)
+
+    assert decision.action.type is ActionType.SCORE
+    assert decision.selected_category is Category.FOUR_OF_A_KIND
+
+
+def test_ev_scores_full_house_instead_of_choice_on_tie() -> None:
+    state = state_with_hand(
+        (6, 6, 6, 5, 5),
+        roll_count=3,
+        available={Category.CHOICE, Category.FULL_HOUSE},
+    )
+    decision = ExpectedValueStrategy().decide(state)
+
+    assert decision.action.type is ActionType.SCORE
+    assert decision.selected_category is Category.FULL_HOUSE
+
+
+def test_ev_can_prefer_near_tie_four_of_a_kind_but_not_a_large_score_gap() -> None:
+    evaluator = CategoryValueEvaluator()
+    near_tie = (6, 6, 6, 6, 2)  # Choice 26, 4K 26
+    larger_gap = (6, 6, 6, 2, 1)  # Choice 21, 4K 0
+    available = (Category.CHOICE, Category.FOUR_OF_A_KIND)
+
+    assert evaluator.best_category(near_tie, available) is Category.FOUR_OF_A_KIND
+    assert evaluator.best_category(larger_gap, available) is Category.CHOICE
