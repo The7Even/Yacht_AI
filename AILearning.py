@@ -52,7 +52,7 @@ def calculate_category_score(cat_idx, dice):
 
 
 # ==========================================
-# 상단 보너스 집중 공략 스마트 리롤
+# 150점 타깃 하이브리드 리롤 (보너스 달성 후 하단 올인)
 # ==========================================
 def smart_reroll_turn(used_mask, total_upper):
   dice = [random.randint(1, 6) for _ in range(5)]
@@ -62,28 +62,27 @@ def smart_reroll_turn(used_mask, total_upper):
     most_num, most_cnt = counts.most_common(1)[0]
     unique_dice = sorted(list(set(dice)))
 
-    # 1. 요트 기회 (요트 비어있고 4개 이상 일치 시 최우선)
-    if not used_mask[11] and most_cnt >= 4:
+    # 1. 요트 기회 (요트 미사용 시 3개 이상 일치하면 무조건 도전)
+    if not used_mask[11] and most_cnt >= 3:
       keep = [d for d in dice if d == most_num]
       dice = keep + [random.randint(1, 6) for _ in range(5 - len(keep))]
       continue
 
-    # 2. [핵심] 상단 63점 미달성 시 공격적 킵
+    # 2. 상단 63점 미달성 시: 상단 보너스 집중 킵
     if total_upper < 63:
-      # 63점까지 얼마 안 남았을 때는 1개만 있어도 상단 빈칸 노림
-      min_req_count = 1 if total_upper >= 45 else 2
+      min_req = 1 if total_upper >= 48 else 2
       upper_candidates = [
           num
           for num in [6, 5, 4, 3, 2, 1]
-          if not used_mask[num - 1] and counts.get(num, 0) >= min_req_count
+          if not used_mask[num - 1] and counts.get(num, 0) >= min_req
       ]
       if upper_candidates:
-        target_num = upper_candidates[0]
-        keep = [d for d in dice if d == target_num]
+        t_num = upper_candidates[0]
+        keep = [d for d in dice if d == t_num]
         dice = keep + [random.randint(1, 6) for _ in range(5 - len(keep))]
         continue
 
-    # 3. 라지 / 스몰 스트레이트 노림수
+    # 3. 스트레이트 노림수 (라지 또는 스몰 미사용 시)
     if not used_mask[10] or not used_mask[9]:
       straights = [{1, 2, 3, 4}, {2, 3, 4, 5}, {3, 4, 5, 6}]
       matched = [s for s in straights if len(s.intersection(unique_dice)) >= 4]
@@ -92,14 +91,14 @@ def smart_reroll_turn(used_mask, total_upper):
         dice = keep + [random.randint(1, 6) for _ in range(5 - len(keep))]
         continue
 
-    # 4. 풀하우스 노림수
+    # 4. 풀하우스 노림수 (미사용 시 2페어 집중)
     vals = sorted(counts.values())
     if not used_mask[8] and vals == [1, 2, 2]:
       keep = [d for d in dice if counts[d] == 2]
       dice = keep + [random.randint(1, 6)]
       continue
 
-    # 5. 기본: 최빈값 킵
+    # 5. 기본: 최빈값 킵 (상단 63점 돌파 이후에는 자연스럽게 포카인드/초이스 극대화)
     keep = [d for d in dice if d == most_num]
     dice = keep + [random.randint(1, 6) for _ in range(5 - len(keep))]
 
@@ -107,7 +106,7 @@ def smart_reroll_turn(used_mask, total_upper):
 
 
 # ==========================================
-# DQN 네트워크 (30차원 입력)
+# 30차원 신경망 (은닉층 강화)
 # ==========================================
 class YachtDQN(nn.Module):
 
@@ -138,20 +137,20 @@ def make_state_vector(dice, used_mask, scores, total_upper):
 
 
 # ==========================================
-# 20,000판 보너스 특화 파이프라인
+# 40,000판 고정밀 학습 파이프라인
 # ==========================================
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = YachtDQN().to(device)
 target_model = copy.deepcopy(model).to(device)
 target_model.eval()
 
-optimizer = optim.Adam(model.parameters(), lr=0.0003)
+optimizer = optim.Adam(model.parameters(), lr=0.00025)
 criterion = nn.SmoothL1Loss()
 
-total_games = 20000
-batch_interval = 1000
+total_games = 40000
+batch_interval = 2000
 epsilon = 0.95
-memory = collections.deque(maxlen=30000)
+memory = collections.deque(maxlen=40000)
 batch_size = 64
 
 history_total_scores = []
@@ -160,7 +159,10 @@ history_bonus_flags = []
 global_max_score = 0
 
 print(f"학습 시작 디바이스: {device}")
-print(f"평균 150점 목표 20,000게임 보너스 특화 가동 중...")
+print(
+    f"평균 150점 정조준 40,000게임 가동 중 (매 {batch_interval}판마다 통계"
+    " 출력)..."
+)
 
 for game in range(1, total_games + 1):
   used_mask = [False] * 12
@@ -186,27 +188,31 @@ for game in range(1, total_games + 1):
     scores[chosen_cat] = gain
     used_mask[chosen_cat] = True
 
-    # 보상 설계 (상단 보너스 최우선 유도)
+    # 150점 고득점 특화 보상 세팅
     reward = float(gain)
 
-    # 1. 0점 희생 페널티 세분화
+    # 1. 고득점 족보 0점 자폭 엄단
     if gain == 0 and chosen_cat in [10, 11]:
-      reward -= 20.0  # 요트, L.스트레이트 자폭 방지
+      reward -= 25.0
+    # 2. Aces/Deuces는 안전한 버림패로 장려
     elif gain == 0 and chosen_cat in [0, 1]:
-      reward -= 2.0  # Aces, Deuces는 안전한 버림패로 인정
+      reward -= 1.0
 
-    # 2. 상단 보너스 강력 유도
+    # 3. Choice 칸 낭비 방지 (20점 미만이면 감점)
+    if chosen_cat == 6 and gain < 20:
+      reward -= 8.0
+
+    # 4. 상단 보너스 체계화
     if chosen_cat <= 5:
       total_upper += gain
       target_std = (chosen_cat + 1) * 3
       if gain >= target_std:
-        reward += 16.0  # 정량(3개) 이상 획득 시 보너스 리워드
+        reward += 16.0
       elif gain == 0:
         reward -= 8.0
 
-      # 63점 돌파 순간 메가 보너스 리워드
       if total_upper >= 63 and (total_upper - gain) < 63:
-        reward += 80.0
+        reward += 85.0  # 보너스 돌파 메가 리워드
 
     next_dice = (
         smart_reroll_turn(used_mask, total_upper) if turn < 11 else [0] * 5
@@ -253,9 +259,10 @@ for game in range(1, total_games + 1):
       loss.backward()
       optimizer.step()
 
-  epsilon = max(0.015, epsilon * 0.99975)
+  # 완만한 감쇠로 4만 판에 걸쳐 안정적 수렴 유도
+  epsilon = max(0.015, epsilon * 0.99988)
 
-  if game % 250 == 0:
+  if game % 300 == 0:
     target_model.load_state_dict(model.state_dict())
 
   has_bonus = total_upper >= 63
@@ -282,4 +289,4 @@ for game in range(1, total_games + 1):
 
 save_path = "yacht_ai_brain.pth"
 torch.save(model.state_dict(), save_path)
-print(f"\n학습 완료! 보너스 특화 최강 두뇌 저장 완료: {save_path}")
+print(f"\n학습 완료! 최종 업그레이드 두뇌 파일 저장 완료: {save_path}")
