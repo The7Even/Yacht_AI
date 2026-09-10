@@ -1,9 +1,10 @@
 """Category-selection evaluator with optional trained neural inference.
 
-The supplied neural network is a category-selection model: five dice are
+The supplied neural network is used as a category policy: five dice are
 encoded into 30 one-hot features and the network emits 12 values, one for each
-Yacht score category.  FastEV still decides rerolls; this module lets the
-trained model take over the final category choice when its model file exists.
+Yacht score category. FastEV still decides whether and which dice to reroll.
+The neural output therefore affects *which category* is recorded, while the
+FastEV score-vs-reroll comparison continues to use real Yacht scores.
 """
 
 from collections.abc import Iterable
@@ -15,7 +16,7 @@ from app.core.scoring import ScoreCalculator
 from .neural_category_selector import DEFAULT_MODEL_PATH, NeuralCategorySelector
 
 
-# These are calibration values rather than claims of exact mathematical EV.
+# Fallback calibration values retained for runs without the trained model.
 CHOICE_OPPORTUNITY_COST = 3.0
 FOUR_OF_A_KIND_PRESERVATION_VALUE = 4.0
 FULL_HOUSE_PRESERVATION_VALUE = 3.0
@@ -23,11 +24,10 @@ NEAR_CHOICE_GAP = 3
 
 
 class CategoryValueEvaluator:
-    """Choose score categories using the trained model when available.
+    """Select score categories with the trained model when available.
 
     ``use_neural_model`` is enabled by default. If the model file is absent,
-    behavior falls back to the previous conservative opportunity-cost logic.
-    This makes the GitHub code runnable before the local ``.pth`` is copied in.
+    the previous conservative opportunity-cost behavior is used instead.
     """
 
     def __init__(
@@ -50,20 +50,16 @@ class CategoryValueEvaluator:
         category: Category,
         available_categories: Iterable[Category],
     ) -> float:
-        """Return the value used by FastEV for a score-now candidate.
-
-        When the neural model is enabled, its raw output is used for the
-        selected category so the model's preference is preserved. Otherwise
-        the conservative opportunity-cost evaluator is used.
-        """
+        """Return the score used for the FastEV score-vs-reroll comparison."""
         values = tuple(dice)
         available = tuple(available_categories)
         if category not in available:
             raise ValueError("Cannot evaluate a category that is not available.")
 
+        # The neural network selects the category in ``best_category``. Do not
+        # mix its raw output scale with FastEV's point-based expected value.
         if self._neural_selector is not None:
-            _, _, predictions = self._neural_selector.select(values, available)
-            return predictions[category]
+            return float(ScoreCalculator.calculate(category, values))
 
         immediate = ScoreCalculator.calculate(category, values)
         if category is Category.CHOICE:
@@ -112,13 +108,13 @@ class CategoryValueEvaluator:
         dice: Iterable[int],
         available_categories: Iterable[Category],
     ) -> dict[Category, float]:
-        """Return model or opportunity-cost values for every legal category."""
+        """Return neural policy values or fallback adjusted values."""
         available = tuple(available_categories)
+        values = tuple(dice)
         if self._neural_selector is not None:
-            values = tuple(dice)
             _, _, predictions = self._neural_selector.select(values, available)
             return {category: predictions[category] for category in available}
         return {
-            category: self.adjusted_score(dice, category, available)
+            category: self.adjusted_score(values, category, available)
             for category in available
         }
